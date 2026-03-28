@@ -1,0 +1,28 @@
+[package]
+name        = "noise-core"
+description = "Core acoustic simulation engine: ray tracing, angle scanning, propagation models"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+rayon.workspace     = true
+num_cpus.workspace  = true
+nalgebra.workspace  = true
+glam.workspace      = true
+approx.workspace    = true
+serde.workspace     = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace   = true
+evalexpr.workspace  = true
+
+[dev-dependencies]
+criterion.workspace = true
+approx.workspace    = true
+
+[[bench]]
+name    = "ray_tracer_bench"
+harness = false

@@ -1,0 +1,20 @@
+[package]
+name        = "noise-render"
+description = "2D/3D rendering engine using wgpu (Vulkan/Metal/DX12/WebGPU)"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+noise-core.path      = "../noise-core"
+noise-data.path      = "../noise-data"
+wgpu.workspace       = true
+winit.workspace      = true
+bytemuck.workspace   = true
+image.workspace      = true
+glam.workspace       = true
+serde.workspace      = true
+thiserror.workspace  = true
+tracing.workspace    = true
