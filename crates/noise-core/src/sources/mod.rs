@@ -1,12 +1,18 @@
+pub mod cnossos_rail;
+pub mod cnossos_road;
 pub mod line;
 pub mod point;
 pub mod railway;
 pub mod road;
+pub mod superposition;
 
+pub use cnossos_rail::{train_emission, total_track_emission, TrainEmission, TrainType, RailRoughness, TrackType};
+pub use cnossos_road::{vehicle_emission, total_road_emission, VehicleEmission, VehicleCategory, RoadSurface};
 pub use line::LineSource;
 pub use point::PointSource;
 pub use railway::RailwaySource;
 pub use road::RoadSource;
+pub use superposition::{combine_dba, combine_bands, ReceiverResult, SourceContribution};
 
 use nalgebra::Point3;
 use serde::{Deserialize, Serialize};
