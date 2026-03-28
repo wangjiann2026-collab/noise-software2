@@ -11,6 +11,10 @@ repository.workspace = true
 name = "noise-api"
 path = "src/main.rs"
 
+[lib]
+name = "noise_api"
+path = "src/lib.rs"
+
 [dependencies]
 noise-core.path       = "../../crates/noise-core"
 noise-data.path       = "../../crates/noise-data"
@@ -31,3 +35,10 @@ tracing-subscriber.workspace = true
 thiserror.workspace   = true
 anyhow.workspace      = true
 uuid.workspace        = true
+
+[dev-dependencies]
+noise-auth.path       = "../../crates/noise-auth"
+noise-data.path       = "../../crates/noise-data"
+nalgebra.workspace    = true
+tokio    = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tower    = { workspace = true, features = ["util"] }

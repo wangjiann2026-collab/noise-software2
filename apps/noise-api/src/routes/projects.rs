@@ -68,7 +68,7 @@ pub async fn list_projects(
 pub async fn create_project(
     State(state): State<AppState>,
     Json(body): Json<CreateProjectRequest>,
-) -> Result<Json<ProjectSummary>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<ProjectSummary>), (StatusCode, Json<serde_json::Value>)> {
     if body.name.trim().is_empty() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -85,12 +85,12 @@ pub async fn create_project(
     let repo = ProjectRepository::new(db.connection());
     repo.insert(&project).map_err(repo_error)?;
 
-    Ok(Json(ProjectSummary {
+    Ok((StatusCode::CREATED, Json(ProjectSummary {
         id: project.id.to_string(),
         name: project.name,
         crs_epsg: crs,
         scenario_count: 1,
-    }))
+    })))
 }
 
 /// `GET /projects/:id` — return full project info.
@@ -195,9 +195,10 @@ mod tests {
             description: Some("A test project".into()),
         };
         let created = create_project(State(state.clone()), Json(req)).await.unwrap();
-        assert_eq!(created.0.name, "Test Project");
-        assert_eq!(created.0.crs_epsg, 32651);
-        assert!(!created.0.id.is_empty());
+        assert_eq!(created.0, StatusCode::CREATED);
+        assert_eq!(created.1.0.name, "Test Project");
+        assert_eq!(created.1.0.crs_epsg, 32651);
+        assert!(!created.1.0.id.is_empty());
 
         let list = list_projects(State(state)).await.unwrap();
         assert_eq!(list.0.len(), 1);
@@ -225,7 +226,7 @@ mod tests {
             description: None,
         };
         let created = create_project(State(state.clone()), Json(req)).await.unwrap();
-        let id = created.0.id.clone();
+        let id = created.1.0.id.clone();
 
         let fetched = get_project(State(state), Path(id)).await.unwrap();
         assert_eq!(fetched.0.name, "City Study");
@@ -259,7 +260,7 @@ mod tests {
             description: None,
         };
         let created = create_project(State(state.clone()), Json(req)).await.unwrap();
-        let pid = created.0.id.clone();
+        let pid = created.1.0.id.clone();
 
         // Insert project with variants directly via DB.
         {
