@@ -16,6 +16,7 @@ noise-core.path       = "../../crates/noise-core"
 noise-data.path       = "../../crates/noise-data"
 noise-auth.path       = "../../crates/noise-auth"
 noise-mcp.path        = "../../crates/noise-mcp"
+nalgebra.workspace    = true
 tokio.workspace       = true
 axum.workspace        = true
 tower.workspace       = true

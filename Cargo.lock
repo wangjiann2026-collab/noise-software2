@@ -2320,6 +2320,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "nalgebra",
  "noise-auth",
  "noise-core",
  "noise-data",
@@ -2354,18 +2355,21 @@ name = "noise-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
  "nalgebra",
  "noise-auth",
  "noise-core",
  "noise-data",
  "noise-io",
+ "noise-mcp",
  "num_cpus",
  "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2453,6 +2457,18 @@ dependencies = [
  "tracing",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "noise-wasm"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "nalgebra",
+ "noise-core",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

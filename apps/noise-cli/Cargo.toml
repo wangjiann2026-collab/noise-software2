@@ -14,11 +14,14 @@ path = "src/main.rs"
 [dependencies]
 noise-core.path      = "../../crates/noise-core"
 noise-data.path      = "../../crates/noise-data"
-nalgebra.workspace   = true
-noise-auth.path      = "../../crates/noise-auth"
 noise-io.path        = "../../crates/noise-io"
+noise-auth.path      = "../../crates/noise-auth"
+noise-mcp.path       = "../../crates/noise-mcp"
+nalgebra.workspace   = true
 clap.workspace       = true
 tokio.workspace      = true
+axum.workspace       = true
+tower-http.workspace = true
 serde.workspace      = true
 serde_json.workspace = true
 tracing.workspace    = true

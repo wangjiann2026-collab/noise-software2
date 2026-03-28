@@ -1,0 +1,25 @@
+[package]
+name        = "noise-wasm"
+description = "WebAssembly bindings for the noise mapping platform"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+noise-core.path  = "../noise-core"
+serde.workspace  = true
+serde_json.workspace = true
+nalgebra.workspace   = true
+wasm-bindgen = { version = "0.2", optional = true }
+
+[features]
+default = []
+wasm = ["wasm-bindgen"]
+
+[dev-dependencies]
+approx.workspace = true
