@@ -1,0 +1,19 @@
+[package]
+name        = "noise-data"
+description = "Data models, database layer, scenario variants, and geometric transforms"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+noise-core.path       = "../noise-core"
+serde.workspace       = true
+serde_json.workspace  = true
+rusqlite.workspace    = true
+thiserror.workspace   = true
+tracing.workspace     = true
+uuid.workspace        = true
+nalgebra.workspace    = true
+approx.workspace      = true

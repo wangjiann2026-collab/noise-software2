@@ -1,0 +1,36 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Cargo lock for libraries (keep for binaries)
+# Cargo.lock  ← kept intentionally for reproducible builds
+
+# SQLite database files (project data)
+*.db
+*.db-shm
+*.db-wal
+
+# Noise project files (user data)
+*.nsp
+
+# IDE and editor
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+.DS_Store
+
+# Compiled WASM output
+/web/dist/
+/web/pkg/
+
+# Tauri build output
+/apps/noise-desktop/src-tauri/target/
+
+# Environment files with secrets
+.env
+.env.local
+*.env
+
+# Benchmark HTML reports
+criterion/

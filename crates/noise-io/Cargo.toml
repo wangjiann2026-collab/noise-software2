@@ -1,0 +1,21 @@
+[package]
+name        = "noise-io"
+description = "Data import/export: DXF, Shapefile, GeoJSON, ASCII, XML"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+noise-core.path      = "../noise-core"
+noise-data.path      = "../noise-data"
+serde.workspace      = true
+serde_json.workspace = true
+dxf.workspace        = true
+geo.workspace        = true
+geojson.workspace    = true
+shapefile.workspace  = true
+quick-xml.workspace  = true
+thiserror.workspace  = true
+tracing.workspace    = true

@@ -1,0 +1,21 @@
+[package]
+name        = "noise-mcp"
+description = "MCP (Model Context Protocol) server exposing acoustic computation to AI agents"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+noise-core.path      = "../noise-core"
+noise-data.path      = "../noise-data"
+noise-auth.path      = "../noise-auth"
+tokio.workspace      = true
+axum.workspace       = true
+tower-http.workspace = true
+serde.workspace      = true
+serde_json.workspace = true
+thiserror.workspace  = true
+tracing.workspace    = true
+uuid.workspace       = true
