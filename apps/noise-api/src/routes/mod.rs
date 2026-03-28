@@ -2,4 +2,5 @@
 pub mod auth;
 pub mod calculate;
 pub mod projects;
+pub mod render;
 pub mod users;

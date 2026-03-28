@@ -4,26 +4,29 @@
 //!
 //! ## Routes
 //!
-//! | Method | Path                            | Auth required | Description              |
-//! |--------|---------------------------------|---------------|--------------------------|
-//! | GET    | /health                         | —             | Health check             |
-//! | GET    | /info                           | —             | Platform info            |
-//! | POST   | /auth/login                     | —             | Obtain JWT token         |
-//! | POST   | /auth/verify                    | —             | Verify JWT token         |
-//! | POST   | /auth/register                  | admin*        | Register new user        |
-//! | PUT    | /auth/change-password           | any           | Change own password      |
-//! | GET    | /users                          | admin         | List all users           |
-//! | GET    | /users/:id                      | admin/self    | Get user                 |
-//! | PUT    | /users/:id/role                 | admin         | Update user role         |
-//! | DELETE | /users/:id                      | admin         | Delete user              |
-//! | GET    | /projects                       | any           | List projects            |
-//! | POST   | /projects                       | analyst+      | Create project           |
-//! | GET    | /projects/:id                   | any           | Get project              |
-//! | GET    | /projects/:id/scenarios         | any           | List scenarios           |
-//! | POST   | /scenarios/:id/calculate        | analyst+      | Submit calculation       |
-//! | GET    | /jobs/:id                       | any           | Get job status           |
-//! | POST   | /mcp/v1/tools/list              | —             | MCP tool listing         |
-//! | POST   | /mcp/v1/tools/call              | —             | MCP tool invocation      |
+//! | Method | Path                                       | Auth required | Description              |
+//! |--------|--------------------------------------------|---------------|--------------------------|
+//! | GET    | /health                                    | —             | Health check             |
+//! | GET    | /info                                      | —             | Platform info            |
+//! | POST   | /auth/login                                | —             | Obtain JWT token         |
+//! | POST   | /auth/verify                               | —             | Verify JWT token         |
+//! | POST   | /auth/register                             | admin*        | Register new user        |
+//! | PUT    | /auth/change-password                      | any           | Change own password      |
+//! | GET    | /users                                     | admin         | List all users           |
+//! | GET    | /users/:id                                 | admin/self    | Get user                 |
+//! | PUT    | /users/:id/role                            | admin         | Update user role         |
+//! | DELETE | /users/:id                                 | admin         | Delete user              |
+//! | GET    | /projects                                  | any           | List projects            |
+//! | POST   | /projects                                  | analyst+      | Create project           |
+//! | GET    | /projects/:id                              | any           | Get project              |
+//! | GET    | /projects/:id/scenarios                    | any           | List scenarios           |
+//! | POST   | /scenarios/:id/calculate                   | analyst+      | Submit calculation       |
+//! | GET    | /jobs/:id                                  | any           | Get job status           |
+//! | GET    | /projects/:pid/scenarios/:sid/render/png   | any           | Render PNG heatmap       |
+//! | GET    | /projects/:pid/scenarios/:sid/render/svg   | any           | Render SVG iso-contours  |
+//! | GET    | /projects/:pid/scenarios/:sid/render/stats | any           | Grid statistics JSON     |
+//! | POST   | /mcp/v1/tools/list                         | —             | MCP tool listing         |
+//! | POST   | /mcp/v1/tools/call                         | —             | MCP tool invocation      |
 //!
 //! *First registration is open (bootstraps the initial admin).
 
@@ -35,6 +38,9 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 mod middleware;
 mod routes;
+mod state;
+
+pub use state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,7 +49,10 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .init();
 
-    let app = build_router();
+    let db_path = std::env::var("NOISE_DB").unwrap_or_else(|_| "noise.db".into());
+    let state = AppState::new(&db_path)?;
+
+    let app = build_router(state);
     let addr = "0.0.0.0:8080";
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("noise-api listening on {addr}");
@@ -51,16 +60,29 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build the full application router.
-pub fn build_router() -> Router {
+/// Build the full application router with shared state.
+pub fn build_router(state: AppState) -> Router {
     // Routes that require a valid JWT (any role).
     let authenticated = Router::new()
-        .route("/auth/change-password", put(routes::users::change_password))
-        .route("/users/:id",            get(routes::users::get_user))
-        .route("/projects",             get(routes::projects::list_projects))
-        .route("/projects/:id",         get(routes::projects::get_project))
+        .route("/auth/change-password",  put(routes::users::change_password))
+        .route("/users/:id",             get(routes::users::get_user))
+        .route("/projects",              get(routes::projects::list_projects))
+        .route("/projects/:id",          get(routes::projects::get_project))
         .route("/projects/:id/scenarios", get(routes::projects::list_scenarios))
-        .route("/jobs/:id",             get(routes::calculate::get_job))
+        .route("/jobs/:id",              get(routes::calculate::get_job))
+        // Render endpoints (no extra auth — JWT is already required by this layer).
+        .route(
+            "/projects/:pid/scenarios/:sid/render/png",
+            get(routes::render::render_png),
+        )
+        .route(
+            "/projects/:pid/scenarios/:sid/render/svg",
+            get(routes::render::render_svg),
+        )
+        .route(
+            "/projects/:pid/scenarios/:sid/render/stats",
+            get(routes::render::render_stats),
+        )
         .layer(axum_mw::from_fn(middleware::auth::auth_layer));
 
     // Routes that require analyst or admin.
@@ -71,9 +93,9 @@ pub fn build_router() -> Router {
 
     // Routes that require admin.
     let admin_routes = Router::new()
-        .route("/users",         get(routes::users::list_users))
+        .route("/users",          get(routes::users::list_users))
         .route("/users/:id/role", put(routes::users::update_role))
-        .route("/users/:id",     delete(routes::users::delete_user))
+        .route("/users/:id",      delete(routes::users::delete_user))
         .layer(axum_mw::from_fn(middleware::auth::auth_layer));
 
     Router::new()
@@ -87,9 +109,11 @@ pub fn build_router() -> Router {
         .merge(authenticated)
         .merge(analyst_routes)
         .merge(admin_routes)
-        // MCP (public — AI agents authenticate via a separate mechanism)
-        .merge(noise_mcp::server::router())
+        // MCP (public — AI agents authenticate via separate mechanism).
+        // Convert stateless Router<()> to Router<AppState> for merging.
+        .merge(noise_mcp::server::router().with_state(()))
         .layer(CorsLayer::permissive())
+        .with_state(state)
 }
 
 async fn health() -> Json<Value> {

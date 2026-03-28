@@ -2320,11 +2320,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "image",
  "nalgebra",
  "noise-auth",
  "noise-core",
  "noise-data",
  "noise-mcp",
+ "noise-render",
  "rusqlite",
  "serde",
  "serde_json",
