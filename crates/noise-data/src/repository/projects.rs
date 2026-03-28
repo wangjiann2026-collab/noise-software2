@@ -84,6 +84,19 @@ impl<'conn> ProjectRepository<'conn> {
         Ok(())
     }
 
+    /// Delete a specific (non-base) scenario variant by its UUID.
+    ///
+    /// Cascades to `scene_objects` and `calculation_results` via FK ON DELETE CASCADE.
+    /// Returns `Err(NotFound)` if the row does not exist or is a base scenario.
+    pub fn delete_variant(&self, variant_id: Uuid) -> Result<(), RepoError> {
+        let changed = self.conn.execute(
+            "DELETE FROM scenarios WHERE id=?1 AND is_base=0",
+            params![variant_id.to_string()],
+        )?;
+        if changed == 0 { return Err(RepoError::NotFound(0)); }
+        Ok(())
+    }
+
     // ── Scenario helpers ──────────────────────────────────────────────────────
 
     fn upsert_scenario(&self, project_id: Uuid, scenario: &Scenario, is_base: bool) -> Result<(), RepoError> {

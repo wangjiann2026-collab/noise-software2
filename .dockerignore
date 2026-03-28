@@ -1,0 +1,26 @@
+# Rust build artifacts — largest exclusion, avoids gigabytes of compiled objects
+target/
+
+# Version control metadata
+.git/
+.gitignore
+
+# Documentation and web assets not needed in the image
+docs/
+web/
+
+# Markdown files (README is excluded here; add an explicit exception if needed)
+*.md
+
+# Secrets and local config — never bake these into an image
+.env
+.env.*
+
+# SQLite databases — data is mounted at runtime via a volume
+*.db
+
+# Node security audit files
+*.nsp
+
+# Benchmark source — not required for the production binary
+benches/

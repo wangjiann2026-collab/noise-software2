@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  noise-api:
+    build: .
+    image: noise-api:latest
+    container_name: noise-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8080}:8080"
+    volumes:
+      - noise-data:/data
+    environment:
+      - NOISE_DB=/data/noise.db
+      - NOISE_JWT_SECRET=${NOISE_JWT_SECRET:-change-me-in-production}
+      - RUST_LOG=${RUST_LOG:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  noise-data:
+    driver: local

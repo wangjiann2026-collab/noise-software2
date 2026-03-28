@@ -2366,6 +2366,7 @@ dependencies = [
  "noise-auth",
  "noise-core",
  "noise-data",
+ "noise-export",
  "noise-io",
  "noise-mcp",
  "num_cpus",

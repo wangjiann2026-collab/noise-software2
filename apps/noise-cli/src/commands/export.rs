@@ -39,7 +39,7 @@ pub async fn run(args: ExportArgs) -> anyhow::Result<()> {
     use noise_data::db::Database;
     use noise_data::repository::{CalculationRepository, ProjectRepository};
     use noise_data::scenario::Project;
-    use noise_io::export::noise_map::{export_ascii, export_geojson, export_csv};
+    use noise_export::{GridView, export_asc, export_csv, export_geojson};
     use noise_io::export::report::{GridStats, NoiseReport, SourceReport};
 
     let db_path = args.db.unwrap_or_else(|| args.project.replace(".nsp", ".db"));
@@ -69,22 +69,33 @@ pub async fn run(args: ExportArgs) -> anyhow::Result<()> {
         (demo, 4, 4)
     };
 
+    // Build a GridView for the noise-export crate functions.
+    let view = GridView {
+        levels: levels.clone(),
+        nx,
+        ny,
+        xllcorner: args.xllcorner,
+        yllcorner: args.yllcorner,
+        cellsize: args.cellsize,
+    };
+
     match args.export_type.as_str() {
         "ascii" => {
-            export_ascii(&levels, nx, ny,
-                args.xllcorner, args.yllcorner, args.cellsize, &args.file)?;
+            let content = export_asc(&view);
+            std::fs::write(&args.file, content)?;
             println!("  Cells  : {nx}×{ny}");
             println!("  Status : ESRI ASCII grid written.");
         }
         "geojson" => {
-            export_geojson(&levels, nx, ny,
-                args.xllcorner, args.yllcorner, args.cellsize, &args.file)?;
+            let value = export_geojson(&view, noise_export::geojson::DEFAULT_LEVELS);
+            let content = serde_json::to_string_pretty(&value)?;
+            std::fs::write(&args.file, content)?;
             println!("  Cells  : {nx}×{ny}");
             println!("  Status : GeoJSON FeatureCollection written.");
         }
         "csv" => {
-            export_csv(&levels, nx, ny,
-                args.xllcorner, args.yllcorner, args.cellsize, &args.file)?;
+            let content = export_csv(&view);
+            std::fs::write(&args.file, content)?;
             println!("  Cells  : {nx}×{ny}");
             println!("  Status : CSV written.");
         }

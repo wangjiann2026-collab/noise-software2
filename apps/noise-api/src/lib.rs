@@ -5,6 +5,7 @@
 
 use axum::{Json, Router, routing::{delete, get, post, put}};
 use axum::middleware as axum_mw;
+use axum::Extension;
 use serde_json::{Value, json};
 use tower_http::cors::CorsLayer;
 
@@ -16,6 +17,8 @@ pub use state::AppState;
 
 /// Build the full application router with shared state.
 pub fn build_router(state: AppState) -> Router {
+    use middleware::rate_limit::{new_rate_limit_state, rate_limit_layer};
+
     // Routes that require a valid JWT (any role).
     let authenticated = Router::new()
         .route("/auth/change-password",   put(routes::users::change_password))
@@ -72,6 +75,16 @@ pub fn build_router(state: AppState) -> Router {
     let analyst_routes = Router::new()
         .route("/projects",                post(routes::projects::create_project))
         .route("/scenarios/:id/calculate", post(routes::calculate::submit_calculate))
+        // Scenario variant CRUD.
+        .route(
+            "/projects/:id/scenarios",
+            post(routes::scenarios::create_variant),
+        )
+        .route(
+            "/projects/:id/scenarios/:sid",
+            put(routes::scenarios::update_variant)
+                .delete(routes::scenarios::delete_variant),
+        )
         // Scene object mutation routes.
         .route(
             "/projects/:pid/scenarios/:sid/objects",
@@ -91,6 +104,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/users/:id",      delete(routes::users::delete_user))
         .layer(axum_mw::from_fn(middleware::auth::auth_layer));
 
+    let rl_state = new_rate_limit_state();
+
     Router::new()
         // Public
         .route("/health",        get(health))
@@ -104,6 +119,9 @@ pub fn build_router(state: AppState) -> Router {
         .merge(admin_routes)
         // MCP (public — AI agents authenticate via separate mechanism).
         .merge(noise_mcp::server::router().with_state(()))
+        // Rate limiting applied to all routes.
+        .layer(axum_mw::from_fn(rate_limit_layer))
+        .layer(Extension(rl_state))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
