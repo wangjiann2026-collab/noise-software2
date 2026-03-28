@@ -154,12 +154,13 @@ async fn create_and_list_project() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let list = json_body(resp).await;
-    let ids: Vec<&str> = list.as_array().unwrap()
-        .iter()
+    let page = json_body(resp).await;
+    let items = page["items"].as_array().unwrap();
+    let ids: Vec<&str> = items.iter()
         .filter_map(|p| p["id"].as_str())
         .collect();
     assert!(ids.contains(&pid.as_str()));
+    assert!(page["total"].as_u64().unwrap() >= 1);
 }
 
 #[tokio::test]

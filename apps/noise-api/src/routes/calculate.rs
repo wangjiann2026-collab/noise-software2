@@ -6,12 +6,12 @@
 use axum::{Json, extract::{Path, State}, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use noise_core::{
-    engine::PropagationConfig,
-    grid::{CalculatorConfig, GridCalculator, HorizontalGrid, MultiPeriodConfig,
+    engine::{PropagationConfig, diffraction::DiffractionEdge},
+    grid::{BarrierSpec, CalculatorConfig, GridCalculator, HorizontalGrid, MultiPeriodConfig,
            MultiPeriodGridCalculator, SourceSpec},
 };
 use noise_data::{
-    entities::{SceneObject, sources::PointSource},
+    entities::SceneObject,
     repository::{CalculationRepository, SceneObjectRepository},
 };
 use nalgebra::Point3;
@@ -79,15 +79,19 @@ pub async fn submit_calculate(
     let nx = ((xmax - xmin) / resolution).ceil() as usize;
     let ny = ((ymax - ymin) / resolution).ceil() as usize;
 
-    // ── Load sources from DB for this scenario ────────────────────────────────
-    let sources: Vec<SourceSpec> = {
+    // ── Load sources and barriers from DB for this scenario ──────────────────
+    let (sources, barriers): (Vec<SourceSpec>, Vec<BarrierSpec>) = {
         let db = state.db.lock().map_err(internal)?;
         let repo = SceneObjectRepository::new(db.connection());
         let objects = repo.list(&scenario_id, None).map_err(repo_err)?;
 
-        objects.into_iter().filter_map(|(_row_id, obj)| {
-            scene_object_to_source_spec(&obj)
-        }).collect()
+        let mut srcs: Vec<SourceSpec> = Vec::new();
+        let mut bars: Vec<BarrierSpec> = Vec::new();
+        for (_row_id, obj) in &objects {
+            scene_object_to_sources(obj, &mut srcs);
+            scene_object_to_barriers(obj, &mut bars);
+        }
+        (srcs, bars)
     };
 
     // Fall back to a demo source when the scenario has no sources yet.
@@ -160,12 +164,12 @@ pub async fn submit_calculate(
             // For Lden/Ldn use the multi-period calculator (EU 2002/49/EC).
             if metric_clone == "Lden" {
                 let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
-                mp.calculate_lden(&mut grid, &sources, &[]);
+                mp.calculate_lden(&mut grid, &sources, &barriers);
             } else if metric_clone == "Ldn" {
                 let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
-                mp.calculate_ldn(&mut grid, &sources, &[]);
+                mp.calculate_ldn(&mut grid, &sources, &barriers);
             } else {
-                GridCalculator::new(cfg).calculate(&mut grid, &sources, &[], None);
+                GridCalculator::new(cfg).calculate(&mut grid, &sources, &barriers, None);
             }
             let levels = grid.results;
 
@@ -331,29 +335,119 @@ pub async fn get_job(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Convert a [`SceneObject`] to a [`SourceSpec`] for noise calculation.
-/// Only point sources contribute directly; other types are ignored for now.
-fn scene_object_to_source_spec(obj: &SceneObject) -> Option<SourceSpec> {
+/// Append [`SourceSpec`] entries for a single [`SceneObject`].
+///
+/// - `PointSource` → single spec.
+/// - `RoadSource`  → one spec per sample point along the polyline,
+///   with Lw energy-split across all samples so the total power is preserved.
+/// - Other types are ignored (barriers are handled separately).
+fn scene_object_to_sources(obj: &SceneObject, out: &mut Vec<SourceSpec>) {
     match obj {
-        SceneObject::PointSource(ps) => Some(SourceSpec {
-            id: ps.id,
-            position: ps.position,
-            lw_db: ps.lw_db,
-            g_source: 0.5,
-        }),
-        SceneObject::RoadSource(rs) => {
-            // Use the first vertex as a point approximation.
-            // Assume a nominal 80 dB(A) per octave band as a conservative estimate.
-            let pos = rs.vertices.first().copied()?;
-            Some(SourceSpec {
-                id: rs.id,
-                position: Point3::new(pos.x, pos.y, rs.source_height_m),
-                lw_db: [80.0; 8],
-                g_source: 0.0,
-            })
+        SceneObject::PointSource(ps) => {
+            out.push(SourceSpec {
+                id: ps.id,
+                position: ps.position,
+                lw_db: ps.lw_db,
+                g_source: 0.5,
+            });
         }
-        _ => None,
+        SceneObject::RoadSource(rs) => {
+            if rs.vertices.len() < 2 {
+                // Degenerate road — emit a single point if at least one vertex.
+                if let Some(&v) = rs.vertices.first() {
+                    out.push(SourceSpec {
+                        id: rs.id,
+                        position: Point3::new(v.x, v.y, rs.source_height_m),
+                        lw_db: [80.0; 8],
+                        g_source: 0.0,
+                    });
+                }
+                return;
+            }
+
+            // Sample uniformly along the polyline at `sample_spacing_m`.
+            let spacing = rs.sample_spacing_m.max(1.0);
+            let samples = sample_polyline(&rs.vertices, spacing, rs.source_height_m);
+            let n = samples.len() as f64;
+            if n == 0.0 { return; }
+
+            // Energy split: Lw_sample = Lw_road − 10·log10(N) so that the sum
+            // of all sample powers equals the road's total emitted power.
+            let split_offset = -10.0 * n.log10();
+            let base_lw = [80.0f64; 8]; // nominal per octave band
+            let sample_lw: [f64; 8] = base_lw.map(|lw| lw + split_offset);
+
+            for (i, pos) in samples.into_iter().enumerate() {
+                out.push(SourceSpec {
+                    id: rs.id * 10_000 + i as u64 + 1,
+                    position: pos,
+                    lw_db: sample_lw,
+                    g_source: 0.0,
+                });
+            }
+        }
+        _ => {}
     }
+}
+
+/// Append [`BarrierSpec`] entries for a single [`SceneObject`].
+///
+/// Each segment of a `Barrier` polyline becomes one `BarrierSpec` whose
+/// diffracting edge is placed at the segment midpoint at `height_m`.
+fn scene_object_to_barriers(obj: &SceneObject, out: &mut Vec<BarrierSpec>) {
+    if let SceneObject::Barrier(b) = obj {
+        for seg in b.vertices.windows(2) {
+            let mid = Point3::new(
+                (seg[0].x + seg[1].x) * 0.5,
+                (seg[0].y + seg[1].y) * 0.5,
+                b.height_m,
+            );
+            out.push(BarrierSpec {
+                edge: DiffractionEdge { point: mid, height_m: b.height_m },
+            });
+        }
+    }
+}
+
+/// Uniformly sample points along a 3-D polyline at `spacing_m` intervals.
+///
+/// The returned points are at `height_z` above the ground (z replaced).
+fn sample_polyline(
+    vertices: &[nalgebra::Point3<f64>],
+    spacing: f64,
+    height_z: f64,
+) -> Vec<Point3<f64>> {
+    let mut result = Vec::new();
+    let mut accumulated = 0.0_f64;
+
+    // Always emit a point at the start.
+    if let Some(&first) = vertices.first() {
+        result.push(Point3::new(first.x, first.y, height_z));
+    }
+
+    for seg in vertices.windows(2) {
+        let dx = seg[1].x - seg[0].x;
+        let dy = seg[1].y - seg[0].y;
+        let seg_len = (dx * dx + dy * dy).sqrt();
+        if seg_len < 1e-9 { continue; }
+
+        let dir_x = dx / seg_len;
+        let dir_y = dy / seg_len;
+
+        // Distance along this segment before first new sample.
+        let mut dist_in_seg = spacing - (accumulated % spacing);
+        if accumulated % spacing < 1e-9 { dist_in_seg = spacing; }
+
+        while dist_in_seg <= seg_len {
+            let x = seg[0].x + dir_x * dist_in_seg;
+            let y = seg[0].y + dir_y * dist_in_seg;
+            result.push(Point3::new(x, y, height_z));
+            dist_in_seg += spacing;
+        }
+        accumulated += seg_len;
+    }
+
+    result
 }
 
 fn repo_err(e: noise_data::repository::RepoError) -> (StatusCode, Json<serde_json::Value>) {

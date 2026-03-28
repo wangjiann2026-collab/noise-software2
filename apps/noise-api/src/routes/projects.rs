@@ -5,15 +5,34 @@
 //! GET  /projects/:id          → get project info
 //! GET  /projects/:id/scenarios → list scenarios for a project
 
-use axum::{Json, extract::{Path, State}, http::StatusCode};
+use axum::{Json, extract::{Path, Query, State}, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use noise_data::{
     repository::ProjectRepository,
-    scenario::{Project, ScenarioVariant},
+    scenario::Project,
 };
 use uuid::Uuid;
 
 use crate::state::AppState;
+
+/// Common pagination query parameters.
+#[derive(Debug, Deserialize, Default)]
+pub struct Pagination {
+    /// Number of items to skip (default 0).
+    #[serde(default)]
+    pub offset: usize,
+    /// Maximum number of items to return (default 50, max 200).
+    pub limit: Option<usize>,
+}
+
+/// Paginated list wrapper.
+#[derive(Debug, Serialize)]
+pub struct Page<T: Serialize> {
+    pub items: Vec<T>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateProjectRequest {
@@ -40,28 +59,36 @@ pub struct ScenarioSummary {
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
-/// `GET /projects` — list all projects stored in the database.
+/// `GET /projects` — list projects with optional pagination (`?offset=&limit=`).
 pub async fn list_projects(
     State(state): State<AppState>,
-) -> Result<Json<Vec<ProjectSummary>>, (StatusCode, Json<serde_json::Value>)> {
+    Query(page): Query<Pagination>,
+) -> Result<Json<Page<ProjectSummary>>, (StatusCode, Json<serde_json::Value>)> {
     let db = state.db.lock().map_err(internal_error)?;
     let repo = ProjectRepository::new(db.connection());
     let projects = repo.list_all().map_err(repo_error)?;
 
-    let summaries = projects.into_iter().map(|(id, name)| {
-        // Fetch full project to get variant count.
-        let scenario_count = repo.get(id)
-            .map(|p| 1 + p.variants.len())
-            .unwrap_or(1);
-        ProjectSummary {
-            id: id.to_string(),
-            name,
-            crs_epsg: 0,   // populated in full get below
-            scenario_count,
-        }
-    }).collect::<Vec<_>>();
+    let total = projects.len();
+    let limit = page.limit.unwrap_or(50).min(200);
+    let offset = page.offset.min(total);
 
-    Ok(Json(summaries))
+    let summaries = projects.into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(id, name)| {
+            let scenario_count = repo.get(id)
+                .map(|p| 1 + p.variants.len())
+                .unwrap_or(1);
+            ProjectSummary {
+                id: id.to_string(),
+                name,
+                crs_epsg: 0,
+                scenario_count,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(Page { items: summaries, total, offset, limit }))
 }
 
 /// `POST /projects` — create a new project and persist it.
@@ -179,11 +206,16 @@ mod tests {
         AppState::in_memory().expect("in-memory DB failed")
     }
 
+    fn no_page() -> Query<Pagination> {
+        Query(Pagination::default())
+    }
+
     #[tokio::test]
     async fn list_projects_empty_initially() {
         let state = test_state();
-        let resp = list_projects(State(state)).await.unwrap();
-        assert!(resp.0.is_empty());
+        let resp = list_projects(State(state), no_page()).await.unwrap();
+        assert!(resp.0.items.is_empty());
+        assert_eq!(resp.0.total, 0);
     }
 
     #[tokio::test]
@@ -200,8 +232,29 @@ mod tests {
         assert_eq!(created.1.0.crs_epsg, 32651);
         assert!(!created.1.0.id.is_empty());
 
-        let list = list_projects(State(state)).await.unwrap();
-        assert_eq!(list.0.len(), 1);
+        let list = list_projects(State(state), no_page()).await.unwrap();
+        assert_eq!(list.0.items.len(), 1);
+        assert_eq!(list.0.total, 1);
+    }
+
+    #[tokio::test]
+    async fn list_projects_pagination() {
+        let state = test_state();
+        for i in 0..5 {
+            let req = CreateProjectRequest {
+                name: format!("Project {i}"),
+                crs_epsg: None,
+                description: None,
+            };
+            create_project(State(state.clone()), Json(req)).await.unwrap();
+        }
+        // Fetch page 2: offset=2, limit=2
+        let page = Query(Pagination { offset: 2, limit: Some(2) });
+        let resp = list_projects(State(state), page).await.unwrap();
+        assert_eq!(resp.0.items.len(), 2);
+        assert_eq!(resp.0.total, 5);
+        assert_eq!(resp.0.offset, 2);
+        assert_eq!(resp.0.limit, 2);
     }
 
     #[tokio::test]
