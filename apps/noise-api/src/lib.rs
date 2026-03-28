@@ -18,13 +18,15 @@ pub use state::AppState;
 pub fn build_router(state: AppState) -> Router {
     // Routes that require a valid JWT (any role).
     let authenticated = Router::new()
-        .route("/auth/change-password",  put(routes::users::change_password))
-        .route("/users/:id",             get(routes::users::get_user))
-        .route("/projects",              get(routes::projects::list_projects))
-        .route("/projects/:id",          get(routes::projects::get_project))
+        .route("/auth/change-password",   put(routes::users::change_password))
+        .route("/users/:id",              get(routes::users::get_user))
+        .route("/projects",               get(routes::projects::list_projects))
+        .route("/projects/:id",           get(routes::projects::get_project))
         .route("/projects/:id/scenarios", get(routes::projects::list_scenarios))
-        .route("/jobs/:id",              get(routes::calculate::get_job))
-        // Scene object routes.
+        .route("/jobs/:id",               get(routes::calculate::get_job))
+        // WebSocket job-progress stream.
+        .route("/ws/jobs/:id",            get(routes::ws::ws_job_progress))
+        // Scene object read routes.
         .route(
             "/projects/:pid/scenarios/:sid/objects",
             get(routes::objects::list_objects),
@@ -33,7 +35,7 @@ pub fn build_router(state: AppState) -> Router {
             "/projects/:pid/scenarios/:sid/objects/:oid",
             get(routes::objects::get_object),
         )
-        // Render endpoints (no extra auth — JWT is already required by this layer).
+        // Render endpoints (JWT already required by this layer).
         .route(
             "/projects/:pid/scenarios/:sid/render/png",
             get(routes::render::render_png),
@@ -46,11 +48,24 @@ pub fn build_router(state: AppState) -> Router {
             "/projects/:pid/scenarios/:sid/render/stats",
             get(routes::render::render_stats),
         )
+        // Export endpoints.
+        .route(
+            "/calculations/:id/export/geojson",
+            get(routes::export::export_geojson_handler),
+        )
+        .route(
+            "/calculations/:id/export/asc",
+            get(routes::export::export_asc_handler),
+        )
+        .route(
+            "/calculations/:id/export/csv",
+            get(routes::export::export_csv_handler),
+        )
         .layer(axum_mw::from_fn(middleware::auth::auth_layer));
 
     // Routes that require analyst or admin.
     let analyst_routes = Router::new()
-        .route("/projects",              post(routes::projects::create_project))
+        .route("/projects",                post(routes::projects::create_project))
         .route("/scenarios/:id/calculate", post(routes::calculate::submit_calculate))
         // Scene object mutation routes.
         .route(
@@ -83,7 +98,6 @@ pub fn build_router(state: AppState) -> Router {
         .merge(analyst_routes)
         .merge(admin_routes)
         // MCP (public — AI agents authenticate via separate mechanism).
-        // Convert stateless Router<()> to Router<AppState> for merging.
         .merge(noise_mcp::server::router().with_state(()))
         .layer(CorsLayer::permissive())
         .with_state(state)

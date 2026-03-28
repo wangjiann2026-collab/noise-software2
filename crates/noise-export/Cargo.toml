@@ -1,0 +1,13 @@
+[package]
+name        = "noise-export"
+description = "Export noise-calculation results to GeoJSON, ESRI ASC, and CSV"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+repository.workspace = true
+
+[dependencies]
+noise-render.path = "../../crates/noise-render"
+serde.workspace   = true
+serde_json.workspace = true

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/noise-core",
     "crates/noise-data",
+    "crates/noise-export",
     "crates/noise-render",
     "crates/noise-io",
     "crates/noise-auth",

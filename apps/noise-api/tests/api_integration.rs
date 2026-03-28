@@ -435,6 +435,119 @@ async fn list_users_requires_admin() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+// ─── Export endpoints ─────────────────────────────────────────────────────────
+
+/// Run a full calculate cycle and return the calc_result_id from the job.
+#[tokio::test(flavor = "multi_thread")]
+async fn export_geojson_after_calculate() {
+    let token = analyst_token();
+    let (router, _pid, sid) = create_project_and_scenario(&token).await;
+
+    // Submit calculation.
+    let body = serde_json::json!({
+        "resolution_m": 10.0,
+        "extent": [0.0, 0.0, 50.0, 50.0]
+    });
+    let resp = router
+        .clone()
+        .oneshot(post_json(&format!("/scenarios/{sid}/calculate"), body, Some(&token)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let job = json_body(resp).await;
+    let job_id = job["job_id"].as_u64().unwrap();
+
+    // Get the job to retrieve calc_result_id (embedded in result).
+    let resp = router
+        .clone()
+        .oneshot(get(&format!("/jobs/{job_id}"), &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Export GeoJSON using calc_id = 1 (first calc in fresh DB).
+    let resp = router
+        .oneshot(get("/calculations/1/export/geojson", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.contains("geo+json"), "expected geo+json content-type, got {ct}");
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let fc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(fc["type"], "FeatureCollection");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_asc_returns_plain_text() {
+    let token = analyst_token();
+    let (router, _pid, sid) = create_project_and_scenario(&token).await;
+
+    let body = serde_json::json!({ "resolution_m": 10.0, "extent": [0.0, 0.0, 30.0, 30.0] });
+    router
+        .clone()
+        .oneshot(post_json(&format!("/scenarios/{sid}/calculate"), body, Some(&token)))
+        .await
+        .unwrap();
+
+    let resp = router
+        .oneshot(get("/calculations/1/export/asc", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.contains("ncols"), "expected ASC header");
+    assert!(text.contains("cellsize"), "expected cellsize field");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_csv_has_header_row() {
+    let token = analyst_token();
+    let (router, _pid, sid) = create_project_and_scenario(&token).await;
+
+    let body = serde_json::json!({ "resolution_m": 10.0, "extent": [0.0, 0.0, 20.0, 20.0] });
+    router
+        .clone()
+        .oneshot(post_json(&format!("/scenarios/{sid}/calculate"), body, Some(&token)))
+        .await
+        .unwrap();
+
+    let resp = router
+        .oneshot(get("/calculations/1/export/csv", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.starts_with("x,y,level_dba\n"), "CSV must start with header");
+}
+
+#[tokio::test]
+async fn export_missing_calc_returns_404() {
+    let token = analyst_token();
+    let resp = app()
+        .oneshot(get("/calculations/9999/export/geojson", &token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn export_requires_auth() {
+    let resp = app()
+        .oneshot(Request::get("/calculations/1/export/geojson").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ─── Admin routes ─────────────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn list_users_with_admin_token() {
     let token = admin_token();

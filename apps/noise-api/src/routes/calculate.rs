@@ -15,7 +15,7 @@ use noise_data::{
 };
 use nalgebra::Point3;
 
-use crate::state::{AppState, JobRecord};
+use crate::state::{AppState, JobEvent, JobRecord};
 
 #[derive(Debug, Deserialize)]
 pub struct CalculateRequest {
@@ -101,20 +101,53 @@ pub async fn submit_calculate(
         sources
     };
 
+    // ── Register job (pending) and broadcast start event ──────────────────────
+    let job_id = state.alloc_job_id();
+    state.jobs.lock().unwrap().insert(job_id, JobRecord {
+        job_id,
+        scenario_id:   scenario_id.clone(),
+        status:        "pending".into(),
+        metric:        metric.clone(),
+        grid_type:     grid_type.clone(),
+        resolution_m:  resolution,
+        progress_pct:  0,
+        calc_result_id: None,
+        error:         None,
+    });
+    let _ = state.event_tx.send(JobEvent::Progress {
+        job_id, pct: 0, message: "queued".into(),
+    });
+
     // ── Run calculation (blocking) ────────────────────────────────────────────
     let sid_clone = scenario_id.clone();
     let metric_clone = metric.clone();
     let grid_type_clone = grid_type.clone();
 
-    let (levels, job_id) = tokio::task::spawn_blocking({
+    let levels = tokio::task::spawn_blocking({
         let state = state.clone();
-        move || -> Result<(Vec<f32>, u64), String> {
+        move || -> Result<Vec<f32>, String> {
+            // Mark running.
+            {
+                let mut jobs = state.jobs.lock().unwrap();
+                if let Some(r) = jobs.get_mut(&job_id) {
+                    r.status = "running".into();
+                    r.progress_pct = 10;
+                }
+            }
+            let _ = state.event_tx.send(JobEvent::Progress {
+                job_id, pct: 10, message: "building grid".into(),
+            });
+
             let mut grid = HorizontalGrid::new(
                 1, "api_grid",
                 Point3::new(xmin, ymin, 0.0),
                 resolution, resolution,
                 nx, ny, 4.0,
             );
+
+            let _ = state.event_tx.send(JobEvent::Progress {
+                job_id, pct: 30, message: "running propagation".into(),
+            });
 
             let cfg = CalculatorConfig {
                 propagation: PropagationConfig::default(),
@@ -124,6 +157,10 @@ pub async fn submit_calculate(
             };
             GridCalculator::new(cfg).calculate(&mut grid, &sources, &[], None);
             let levels = grid.results;
+
+            let _ = state.event_tx.send(JobEvent::Progress {
+                job_id, pct: 80, message: "persisting result".into(),
+            });
 
             // Persist result to DB.
             let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -138,25 +175,29 @@ pub async fn submit_calculate(
                 .insert(&sid_clone, &grid_type_clone, &metric_clone, &data)
                 .map_err(|e| e.to_string())?;
 
-            // Register job record.
-            let job_id = state.alloc_job_id();
-            state.jobs.lock().unwrap().insert(job_id, JobRecord {
-                job_id,
-                scenario_id: sid_clone,
-                status: "completed".into(),
-                metric: metric_clone,
-                grid_type: grid_type_clone,
-                resolution_m: resolution,
-                progress_pct: 100,
-                calc_result_id: Some(calc_id),
-                error: None,
-            });
-            Ok((levels, job_id))
+            // Update job record to completed.
+            {
+                let mut jobs = state.jobs.lock().unwrap();
+                if let Some(r) = jobs.get_mut(&job_id) {
+                    r.status = "completed".into();
+                    r.progress_pct = 100;
+                    r.calc_result_id = Some(calc_id);
+                }
+            }
+            let _ = state.event_tx.send(JobEvent::Completed { job_id, calc_result_id: calc_id });
+            Ok(levels)
         }
-    }).await.expect("blocking task panicked").map_err(|e| (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": e })),
-    ))?;
+    }).await.expect("blocking task panicked").map_err(|e| {
+        // Mark job failed.
+        if let Ok(mut jobs) = state.jobs.lock() {
+            if let Some(r) = jobs.get_mut(&job_id) {
+                r.status = "failed".into();
+                r.error  = Some(e.clone());
+            }
+        }
+        let _ = state.event_tx.send(JobEvent::Failed { job_id, error: e.clone() });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e })))
+    })?;
 
     // ── Build response ────────────────────────────────────────────────────────
     let finite: Vec<f32> = levels.iter().copied().filter(|&v| v.is_finite() && v > 0.0).collect();
