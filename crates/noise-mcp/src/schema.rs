@@ -90,12 +90,66 @@ pub fn all_tools() -> Vec<McpTool> {
             description: "Get standard noise metrics (Ld, Ln, Lden, etc.) at a specific receiver point.".into(),
             input_schema: json!({
                 "type": "object",
-                "required": ["scenario_id", "x", "y", "z"],
+                "required": ["scenario_id", "x", "y"],
                 "properties": {
                     "scenario_id": { "type": "string" },
                     "x": { "type": "number", "description": "X coordinate (project CRS)" },
                     "y": { "type": "number", "description": "Y coordinate (project CRS)" },
                     "z": { "type": "number", "description": "Z coordinate / height (m)", "default": 4.0 }
+                }
+            }),
+        },
+        McpTool {
+            name: "noise_import".into(),
+            description: "Import scene geometry from a file (DXF, Shapefile, GeoJSON, ASCII Grid, or XML).".into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["file_path"],
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Absolute or relative path to the input file"
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["dxf", "shapefile", "geojson", "ascii", "xml"],
+                        "description": "Force a specific format (auto-detected from extension if omitted)"
+                    },
+                    "scenario_id": {
+                        "type": "string",
+                        "description": "Target scenario to import into (creates new if omitted)"
+                    }
+                }
+            }),
+        },
+        McpTool {
+            name: "noise_export".into(),
+            description: "Export noise calculation results to a file (ESRI ASCII, GeoJSON, CSV, or Markdown report).".into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["calculation_id", "format", "output_path"],
+                "properties": {
+                    "calculation_id": { "type": "integer" },
+                    "format": {
+                        "type": "string",
+                        "enum": ["ascii", "geojson", "csv", "markdown", "text"],
+                        "description": "Output format"
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "Destination file path"
+                    }
+                }
+            }),
+        },
+        McpTool {
+            name: "noise_project_info".into(),
+            description: "Get metadata and summary information for a project.".into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["project_id"],
+                "properties": {
+                    "project_id": { "type": "string" }
                 }
             }),
         },

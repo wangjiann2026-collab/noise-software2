@@ -4,7 +4,10 @@ pub mod ascii;
 pub mod dxf;
 pub mod geojson;
 pub mod shapefile;
+pub mod types;
 pub mod xml;
+
+pub use types::{ImportedGeometry, ImportedObject, ImportedScene, ObjectKind};
 
 use thiserror::Error;
 
