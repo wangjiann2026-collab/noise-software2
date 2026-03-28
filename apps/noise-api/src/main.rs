@@ -4,24 +4,36 @@
 //!
 //! ## Routes
 //!
-//! | Method | Path                            | Description              |
-//! |--------|---------------------------------|--------------------------|
-//! | POST   | /auth/login                     | Authenticate user        |
-//! | POST   | /auth/verify                    | Verify JWT token         |
-//! | GET    | /projects                       | List projects            |
-//! | POST   | /projects                       | Create project           |
-//! | GET    | /projects/:id                   | Get project info         |
-//! | GET    | /projects/:id/scenarios         | List scenarios           |
-//! | POST   | /scenarios/:id/calculate        | Submit calculation job   |
-//! | GET    | /jobs/:id                       | Get job status/result    |
-//! | POST   | /mcp/v1/tools/list              | MCP tool listing         |
-//! | POST   | /mcp/v1/tools/call              | MCP tool invocation      |
+//! | Method | Path                            | Auth required | Description              |
+//! |--------|---------------------------------|---------------|--------------------------|
+//! | GET    | /health                         | —             | Health check             |
+//! | GET    | /info                           | —             | Platform info            |
+//! | POST   | /auth/login                     | —             | Obtain JWT token         |
+//! | POST   | /auth/verify                    | —             | Verify JWT token         |
+//! | POST   | /auth/register                  | admin*        | Register new user        |
+//! | PUT    | /auth/change-password           | any           | Change own password      |
+//! | GET    | /users                          | admin         | List all users           |
+//! | GET    | /users/:id                      | admin/self    | Get user                 |
+//! | PUT    | /users/:id/role                 | admin         | Update user role         |
+//! | DELETE | /users/:id                      | admin         | Delete user              |
+//! | GET    | /projects                       | any           | List projects            |
+//! | POST   | /projects                       | analyst+      | Create project           |
+//! | GET    | /projects/:id                   | any           | Get project              |
+//! | GET    | /projects/:id/scenarios         | any           | List scenarios           |
+//! | POST   | /scenarios/:id/calculate        | analyst+      | Submit calculation       |
+//! | GET    | /jobs/:id                       | any           | Get job status           |
+//! | POST   | /mcp/v1/tools/list              | —             | MCP tool listing         |
+//! | POST   | /mcp/v1/tools/call              | —             | MCP tool invocation      |
+//!
+//! *First registration is open (bootstraps the initial admin).
 
-use axum::{Json, Router, routing::{get, post}};
+use axum::{Json, Router, routing::{delete, get, post, put}};
+use axum::middleware as axum_mw;
 use serde_json::{Value, json};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{EnvFilter, fmt};
 
+mod middleware;
 mod routes;
 
 #[tokio::main]
@@ -32,7 +44,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let app = build_router();
-
     let addr = "0.0.0.0:8080";
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("noise-api listening on {addr}");
@@ -40,24 +51,43 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build the full application router (extracted for testability).
+/// Build the full application router.
 pub fn build_router() -> Router {
-    Router::new()
-        // System
-        .route("/health", get(health))
-        .route("/info",   get(info))
-        // Auth
-        .route("/auth/login",  post(routes::auth::login))
-        .route("/auth/verify", post(routes::auth::verify))
-        // Projects
-        .route("/projects",     get(routes::projects::list_projects)
-                               .post(routes::projects::create_project))
-        .route("/projects/:id", get(routes::projects::get_project))
+    // Routes that require a valid JWT (any role).
+    let authenticated = Router::new()
+        .route("/auth/change-password", put(routes::users::change_password))
+        .route("/users/:id",            get(routes::users::get_user))
+        .route("/projects",             get(routes::projects::list_projects))
+        .route("/projects/:id",         get(routes::projects::get_project))
         .route("/projects/:id/scenarios", get(routes::projects::list_scenarios))
-        // Calculations
+        .route("/jobs/:id",             get(routes::calculate::get_job))
+        .layer(axum_mw::from_fn(middleware::auth::auth_layer));
+
+    // Routes that require analyst or admin.
+    let analyst_routes = Router::new()
+        .route("/projects",              post(routes::projects::create_project))
         .route("/scenarios/:id/calculate", post(routes::calculate::submit_calculate))
-        .route("/jobs/:id",                get(routes::calculate::get_job))
-        // MCP
+        .layer(axum_mw::from_fn(middleware::auth::auth_layer));
+
+    // Routes that require admin.
+    let admin_routes = Router::new()
+        .route("/users",         get(routes::users::list_users))
+        .route("/users/:id/role", put(routes::users::update_role))
+        .route("/users/:id",     delete(routes::users::delete_user))
+        .layer(axum_mw::from_fn(middleware::auth::auth_layer));
+
+    Router::new()
+        // Public
+        .route("/health",        get(health))
+        .route("/info",          get(info))
+        .route("/auth/login",    post(routes::auth::login))
+        .route("/auth/verify",   post(routes::auth::verify))
+        .route("/auth/register", post(routes::users::register))
+        // Protected groups
+        .merge(authenticated)
+        .merge(analyst_routes)
+        .merge(admin_routes)
+        // MCP (public — AI agents authenticate via a separate mechanism)
         .merge(noise_mcp::server::router())
         .layer(CorsLayer::permissive())
 }

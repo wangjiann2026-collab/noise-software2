@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod calc;
 pub mod export;
 pub mod import;

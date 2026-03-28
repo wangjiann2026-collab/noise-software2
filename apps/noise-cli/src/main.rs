@@ -51,6 +51,8 @@ enum OutputFormat {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Authenticate with a noise platform server (login, logout, whoami, register).
+    Auth(commands::auth::AuthArgs),
     /// Manage projects, scenarios, and variants.
     Project(commands::project::ProjectArgs),
     /// Manage scene objects (receivers, sources, buildings, etc.).
@@ -84,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
+        Commands::Auth(args)    => commands::auth::run(args).await,
         Commands::Project(args) => commands::project::run(args).await,
         Commands::Object(args)  => commands::object::run(args).await,
         Commands::Calc(args)    => commands::calc::run(args).await,

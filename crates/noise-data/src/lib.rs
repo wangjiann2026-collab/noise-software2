@@ -13,7 +13,8 @@ pub mod prelude {
     pub use crate::db::Database;
     pub use crate::entities::{ObjectType, SceneObject};
     pub use crate::repository::{
-        CalculationRepository, ProjectRepository, RepoError, SceneObjectRepository,
+        CalculationRepository, ProjectRepository, RepoError,
+        SceneObjectRepository, UserRepository, StoredUser,
     };
     pub use crate::scenario::{Project, Scenario, ScenarioVariant, VariantResolver};
     pub use crate::transform::GeometricTransform;

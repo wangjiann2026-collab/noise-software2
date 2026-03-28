@@ -6,10 +6,12 @@
 pub mod calculations;
 pub mod projects;
 pub mod scene_objects;
+pub mod users;
 
 pub use calculations::CalculationRepository;
 pub use projects::ProjectRepository;
 pub use scene_objects::SceneObjectRepository;
+pub use users::{StoredUser, UserRepository};
 
 use thiserror::Error;
 

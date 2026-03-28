@@ -2325,6 +2325,7 @@ dependencies = [
  "noise-core",
  "noise-data",
  "noise-mcp",
+ "rusqlite",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2372,6 +2373,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
