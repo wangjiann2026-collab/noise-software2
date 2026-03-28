@@ -26,6 +26,16 @@ pub struct CalcArgs {
     #[arg(long, default_value_t = 10.0)]
     pub resolution: f64,
 
+    /// Evening source-power offset (dB) relative to daytime; used for Lden/Ldn.
+    /// Negative = quieter evening.  Default: 0.
+    #[arg(long, default_value_t = 0.0)]
+    pub evening_offset_db: f64,
+
+    /// Night source-power offset (dB) relative to daytime; used for Lden/Ldn.
+    /// Negative = reduced night traffic (e.g. −3 for road, −6 for rail).
+    #[arg(long, default_value_t = 0.0)]
+    pub night_offset_db: f64,
+
     /// Number of CPU threads (0 = all available).
     #[arg(long, default_value_t = 0)]
     pub threads: usize,
@@ -47,8 +57,10 @@ pub enum GridType {
 }
 
 pub async fn run(args: CalcArgs) -> anyhow::Result<()> {
-    use noise_core::grid::{GridCalculator, SourceSpec, CalculatorConfig, HorizontalGrid};
+    use noise_core::grid::{GridCalculator, MultiPeriodConfig, MultiPeriodGridCalculator,
+                           SourceSpec, CalculatorConfig, HorizontalGrid};
     use noise_core::engine::PropagationConfig;
+    use noise_core::metrics::{compute_exposure, EU_END_THRESHOLDS};
     use noise_core::parallel::{ParallelScheduler, SchedulerConfig};
     use noise_data::db::Database;
     use noise_data::repository::{CalculationRepository, ProjectRepository, SceneObjectRepository};
@@ -139,18 +151,39 @@ pub async fn run(args: CalcArgs) -> anyhow::Result<()> {
         g_middle: 0.0,
         max_source_range_m: None,
     };
-    let calc = GridCalculator::new(cfg);
-    let total_cells = nx * ny;
-    let progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>> = Some(Arc::new(
-        move |done: usize, total: usize| {
-            if total > 0 && done % (total / 10).max(1) == 0 {
-                let pct = done * 100 / total;
-                eprint!("\r  Progress : {pct:3}%");
-            }
+
+    let is_multi_period = matches!(args.metric.as_str(), "Lden" | "Ldn");
+    let peak: f32;
+    if is_multi_period {
+        println!("  Mode      : multi-period ({}) — EU 2002/49/EC", args.metric);
+        let period_cfg = MultiPeriodConfig {
+            evening_source_offset_db: args.evening_offset_db,
+            night_source_offset_db:   args.night_offset_db,
+            ..Default::default()
+        };
+        let mp = MultiPeriodGridCalculator::new(cfg, period_cfg);
+        if args.metric == "Lden" {
+            mp.calculate_lden(&mut grid, &sources, &[]);
+        } else {
+            mp.calculate_ldn(&mut grid, &sources, &[]);
         }
-    ));
-    let peak = calc.calculate(&mut grid, &sources, &[], progress);
-    eprintln!("\r  Progress : 100%");
+        peak = grid.results.iter().copied()
+            .filter(|v| v.is_finite())
+            .fold(f32::NEG_INFINITY, f32::max);
+    } else {
+        let total_cells = nx * ny;
+        let progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>> = Some(Arc::new(
+            move |done: usize, total: usize| {
+                if total > 0 && done % (total / 10).max(1) == 0 {
+                    let pct = done * 100 / total;
+                    eprint!("\r  Progress : {pct:3}%");
+                }
+            }
+        ));
+        peak = GridCalculator::new(cfg).calculate(&mut grid, &sources, &[], progress) as f32;
+        eprintln!("\r  Progress : 100%");
+        let _ = total_cells;
+    }
     println!("  Peak level: {peak:.1} dBA");
     let cells_calculated = grid.results.len();
     println!("  Calculated: {cells_calculated} cells");
@@ -163,6 +196,14 @@ pub async fn run(args: CalcArgs) -> anyhow::Result<()> {
     let mean = if finite.is_empty() { 0.0 }
                else { finite.iter().sum::<f64>() / finite.len() as f64 };
     println!("  Mean level: {mean:.1} dBA");
+
+    // Exposure statistics.
+    let exposure = compute_exposure(&grid.results, &EU_END_THRESHOLDS);
+    println!("  Exposure  : {} valid receivers", exposure.valid_receivers);
+    for exc in &exposure.above_thresholds {
+        println!("    > {:.0} dBA : {} ({:.1}%)",
+            exc.threshold_db, exc.count_above, exc.pct_above);
+    }
 
     // Store in DB.
     let levels_json: Vec<f32> = grid.results.clone();

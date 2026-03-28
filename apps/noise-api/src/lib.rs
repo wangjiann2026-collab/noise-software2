@@ -61,6 +61,11 @@ pub fn build_router(state: AppState) -> Router {
             "/calculations/:id/export/csv",
             get(routes::export::export_csv_handler),
         )
+        // Statistics endpoint.
+        .route(
+            "/calculations/:id/stats",
+            get(routes::stats::calc_stats),
+        )
         .layer(axum_mw::from_fn(middleware::auth::auth_layer));
 
     // Routes that require analyst or admin.

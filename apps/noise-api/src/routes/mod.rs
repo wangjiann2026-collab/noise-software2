@@ -5,5 +5,6 @@ pub mod export;
 pub mod objects;
 pub mod projects;
 pub mod render;
+pub mod stats;
 pub mod users;
 pub mod ws;

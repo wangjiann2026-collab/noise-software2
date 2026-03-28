@@ -7,7 +7,8 @@ use axum::{Json, extract::{Path, State}, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use noise_core::{
     engine::PropagationConfig,
-    grid::{CalculatorConfig, GridCalculator, HorizontalGrid, SourceSpec},
+    grid::{CalculatorConfig, GridCalculator, HorizontalGrid, MultiPeriodConfig,
+           MultiPeriodGridCalculator, SourceSpec},
 };
 use noise_data::{
     entities::{SceneObject, sources::PointSource},
@@ -155,7 +156,17 @@ pub async fn submit_calculate(
                 g_middle: 0.5,
                 max_source_range_m: None,
             };
-            GridCalculator::new(cfg).calculate(&mut grid, &sources, &[], None);
+
+            // For Lden/Ldn use the multi-period calculator (EU 2002/49/EC).
+            if metric_clone == "Lden" {
+                let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
+                mp.calculate_lden(&mut grid, &sources, &[]);
+            } else if metric_clone == "Ldn" {
+                let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
+                mp.calculate_ldn(&mut grid, &sources, &[]);
+            } else {
+                GridCalculator::new(cfg).calculate(&mut grid, &sources, &[], None);
+            }
             let levels = grid.results;
 
             let _ = state.event_tx.send(JobEvent::Progress {
