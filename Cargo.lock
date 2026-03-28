@@ -2307,6 +2307,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nalgebra",
  "noise-auth",
  "noise-core",
  "noise-data",

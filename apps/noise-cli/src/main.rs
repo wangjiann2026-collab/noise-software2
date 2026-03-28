@@ -53,6 +53,8 @@ enum OutputFormat {
 enum Commands {
     /// Manage projects, scenarios, and variants.
     Project(commands::project::ProjectArgs),
+    /// Manage scene objects (receivers, sources, buildings, etc.).
+    Object(commands::object::ObjectArgs),
     /// Run acoustic noise calculations.
     Calc(commands::calc::CalcArgs),
     /// Import scene data from DXF, Shapefile, GeoJSON, ASCII, or XML.
@@ -83,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Project(args) => commands::project::run(args).await,
+        Commands::Object(args)  => commands::object::run(args).await,
         Commands::Calc(args)    => commands::calc::run(args).await,
         Commands::Import(args)  => commands::import::run(args).await,
         Commands::Export(args)  => commands::export::run(args).await,

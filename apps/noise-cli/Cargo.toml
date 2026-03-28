@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 noise-core.path      = "../../crates/noise-core"
 noise-data.path      = "../../crates/noise-data"
+nalgebra.workspace   = true
 noise-auth.path      = "../../crates/noise-auth"
 noise-io.path        = "../../crates/noise-io"
 clap.workspace       = true
