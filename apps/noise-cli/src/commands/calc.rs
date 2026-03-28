@@ -137,6 +137,7 @@ pub async fn run(args: CalcArgs) -> anyhow::Result<()> {
         propagation: PropagationConfig::default(),
         g_receiver: 0.0,
         g_middle: 0.0,
+        max_source_range_m: None,
     };
     let calc = GridCalculator::new(cfg);
     let total_cells = nx * ny;

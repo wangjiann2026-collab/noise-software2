@@ -7,17 +7,26 @@ authors.workspace    = true
 license.workspace    = true
 repository.workspace = true
 
+[features]
+# Enable wgpu-based GPU grid calculator.
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:futures"]
+
 [dependencies]
-rayon.workspace     = true
-num_cpus.workspace  = true
-nalgebra.workspace  = true
-glam.workspace      = true
-approx.workspace    = true
-serde.workspace     = true
+rayon.workspace      = true
+num_cpus.workspace   = true
+nalgebra.workspace   = true
+glam.workspace       = true
+approx.workspace     = true
+serde.workspace      = true
 serde_json.workspace = true
-thiserror.workspace = true
-tracing.workspace   = true
-evalexpr.workspace  = true
+thiserror.workspace  = true
+tracing.workspace    = true
+evalexpr.workspace   = true
+
+# GPU feature dependencies (optional).
+wgpu     = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+futures  = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
@@ -25,4 +34,12 @@ approx.workspace    = true
 
 [[bench]]
 name    = "ray_tracer_bench"
+harness = false
+
+[[bench]]
+name    = "propagation_bench"
+harness = false
+
+[[bench]]
+name    = "grid_calc_bench"
 harness = false

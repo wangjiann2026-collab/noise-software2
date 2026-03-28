@@ -2381,8 +2381,10 @@ name = "noise-core"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "bytemuck",
  "criterion",
  "evalexpr",
+ "futures",
  "glam",
  "nalgebra",
  "num_cpus",
@@ -2391,6 +2393,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tracing",
+ "wgpu",
 ]
 
 [[package]]

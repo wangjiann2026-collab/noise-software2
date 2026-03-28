@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::diffraction::{barrier_attenuation_db, BarrierPath, DiffractionEdge};
 use super::ground_effect::{ground_attenuation_db, GroundPath, OCTAVE_BANDS};
+use crate::simd::energy_sum_bands;
 use nalgebra::Point3;
 
 // ─── Atmospheric conditions ───────────────────────────────────────────────────
@@ -89,13 +90,10 @@ pub struct AttenuationBreakdown {
 
 impl AttenuationBreakdown {
     /// Convert A-weighted sum of Lw_source − A_total to Lp (SPL, dBA).
+    ///
+    /// Uses the SIMD-accelerated [`energy_sum_bands`] on x86-64 with AVX2.
     pub fn apply_to_lw(&self, lw_db: &[f64; 8]) -> f64 {
-        let sum: f64 = lw_db
-            .iter()
-            .zip(self.a_total.iter())
-            .zip(AtmosphericConditions::A_WEIGHTS.iter())
-            .map(|((&lw, &a), &aw)| 10f64.powf((lw - a + aw) / 10.0))
-            .sum();
+        let sum = energy_sum_bands(lw_db, &self.a_total, &AtmosphericConditions::A_WEIGHTS);
         if sum <= 0.0 { return -f64::INFINITY; }
         10.0 * sum.log10()
     }

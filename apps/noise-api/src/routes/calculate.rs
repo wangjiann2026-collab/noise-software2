@@ -91,6 +91,7 @@ pub async fn submit_calculate(
         propagation: PropagationConfig::default(),
         g_receiver: 0.0,
         g_middle: 0.0,
+        max_source_range_m: None,
     };
     let calc = GridCalculator::new(cfg);
     let _peak = calc.calculate(&mut grid, &demo_sources, &[], None);
