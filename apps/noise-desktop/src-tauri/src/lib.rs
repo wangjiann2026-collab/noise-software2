@@ -15,7 +15,10 @@ use noise_data::{
     db::Database,
     repository::{ProjectRepository, SceneObjectRepository, CalculationRepository},
     scenario::Project,
-    entities::{SceneObject, sources::PointSource},
+    entities::{
+        SceneObject, Barrier,
+        sources::{PointSource, RoadSource, RoadSurface},
+    },
 };
 use noise_core::{
     engine::{PropagationConfig, diffraction::DiffractionEdge},
@@ -70,12 +73,22 @@ pub struct ProjectDetail {
     pub variants: Vec<ScenarioInfo>,
 }
 
-/// Summary row for a single scene object.
+/// Summary row for a single scene object, including geometry for the CAD view.
 #[derive(Debug, Serialize, Clone)]
 pub struct ObjectInfo {
     pub row_id: i64,
     pub name: String,
     pub object_type: String,
+    /// Point source / receiver position [x, y, z].
+    pub position: Option<[f64; 3]>,
+    /// Broadband sound power level (first octave band, dB) for point sources.
+    pub lw_db: Option<f64>,
+    /// Polyline vertices [[x,y,z], …] for road / barrier / line objects.
+    pub vertices: Option<Vec<[f64; 3]>>,
+    /// Barrier height above ground (m).
+    pub height_m: Option<f64>,
+    /// Road source emission height above ground (m).
+    pub source_height_m: Option<f64>,
 }
 
 /// Result returned after a grid calculation.
@@ -238,10 +251,41 @@ pub fn list_objects(
         .map_err(|e| e.to_string())?;
     Ok(objects
         .into_iter()
-        .map(|(row_id, obj)| ObjectInfo {
-            row_id,
-            name: obj.name().to_owned(),
-            object_type: format!("{:?}", obj.object_type()),
+        .map(|(row_id, obj)| {
+            let (position, lw_db, vertices, height_m, source_height_m) = match &obj {
+                SceneObject::PointSource(ps) => (
+                    Some([ps.position.x, ps.position.y, ps.position.z]),
+                    Some(ps.lw_db[0]),
+                    None,
+                    None,
+                    None,
+                ),
+                SceneObject::RoadSource(rs) => (
+                    None,
+                    None,
+                    Some(rs.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()),
+                    None,
+                    Some(rs.source_height_m),
+                ),
+                SceneObject::Barrier(b) => (
+                    None,
+                    None,
+                    Some(b.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()),
+                    Some(b.height_m),
+                    None,
+                ),
+                _ => (None, None, None, None, None),
+            };
+            ObjectInfo {
+                row_id,
+                name: obj.name().to_owned(),
+                object_type: obj.object_type().as_str().to_owned(),
+                position,
+                lw_db,
+                vertices,
+                height_m,
+                source_height_m,
+            }
         })
         .collect())
 }
@@ -451,6 +495,94 @@ pub fn export_file(
         .map_err(|e| format!("failed to write {file_path}: {e}"))
 }
 
+/// Add a road source polyline to a scenario.
+#[tauri::command]
+pub fn add_road_source(
+    state: State<AppState>,
+    scenario_id: String,
+    name: String,
+    vertices: Vec<[f64; 3]>,
+    source_height_m: f64,
+    sample_spacing_m: f64,
+) -> Result<i64, String> {
+    if vertices.len() < 2 {
+        return Err("road source requires at least 2 vertices".into());
+    }
+    let verts: Vec<Point3<f64>> = vertices.iter()
+        .map(|v| Point3::new(v[0], v[1], v[2])).collect();
+    let rs = RoadSource {
+        id: 1, name,
+        vertices: verts,
+        traffic_flows: vec![],
+        surface: RoadSurface::DenseAsphalt,
+        gradient_pct: 0.0,
+        source_height_m,
+        sample_spacing_m,
+    };
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    SceneObjectRepository::new(db.connection())
+        .insert(&scenario_id, &SceneObject::RoadSource(rs))
+        .map_err(|e| e.to_string())
+}
+
+/// Add a noise barrier polyline to a scenario.
+#[tauri::command]
+pub fn add_barrier(
+    state: State<AppState>,
+    scenario_id: String,
+    name: String,
+    vertices: Vec<[f64; 3]>,
+    height_m: f64,
+) -> Result<i64, String> {
+    if vertices.len() < 2 {
+        return Err("barrier requires at least 2 vertices".into());
+    }
+    let verts: Vec<Point3<f64>> = vertices.iter()
+        .map(|v| Point3::new(v[0], v[1], v[2])).collect();
+    let barrier = Barrier::new(1, name, verts, height_m);
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    SceneObjectRepository::new(db.connection())
+        .insert(&scenario_id, &SceneObject::Barrier(barrier))
+        .map_err(|e| e.to_string())
+}
+
+/// Update the geometry (position or vertices) of an existing scene object.
+///
+/// - Point sources: supply `x`, `y`, `z`.
+/// - Road / barrier: supply `vertices`.
+#[tauri::command]
+pub fn update_object_geometry(
+    state: State<AppState>,
+    row_id: i64,
+    x: Option<f64>,
+    y: Option<f64>,
+    z: Option<f64>,
+    vertices: Option<Vec<[f64; 3]>>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+    match &mut obj {
+        SceneObject::PointSource(ps) => {
+            if let (Some(nx), Some(ny), Some(nz)) = (x, y, z) {
+                ps.position = Point3::new(nx, ny, nz);
+            }
+        }
+        SceneObject::RoadSource(rs) => {
+            if let Some(verts) = vertices {
+                rs.vertices = verts.iter().map(|v| Point3::new(v[0], v[1], v[2])).collect();
+            }
+        }
+        SceneObject::Barrier(b) => {
+            if let Some(verts) = vertices {
+                b.vertices = verts.iter().map(|v| Point3::new(v[0], v[1], v[2])).collect();
+            }
+        }
+        _ => return Err("geometry update not supported for this object type".into()),
+    }
+    repo.update(row_id, &obj).map_err(|e| e.to_string())
+}
+
 } // pub mod commands
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -603,6 +735,9 @@ pub fn run() {
             commands::get_project,
             commands::delete_project,
             commands::add_point_source,
+            commands::add_road_source,
+            commands::add_barrier,
+            commands::update_object_geometry,
             commands::list_objects,
             commands::delete_object,
             commands::run_calculation,
