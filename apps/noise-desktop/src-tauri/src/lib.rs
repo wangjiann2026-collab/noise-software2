@@ -583,7 +583,442 @@ pub fn update_object_geometry(
     repo.update(row_id, &obj).map_err(|e| e.to_string())
 }
 
+/// 批量平移对象（世界坐标增量 dx, dy, dz）
+#[tauri::command]
+pub fn move_objects(
+    state: State<AppState>,
+    row_ids: Vec<i64>,
+    dx: f64,
+    dy: f64,
+    dz: f64,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    for row_id in row_ids {
+        let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+        translate_object(&mut obj, dx, dy, dz);
+        repo.update(row_id, &obj).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 复制对象并偏移 dx, dy（返回新对象 row_ids）
+#[tauri::command]
+pub fn copy_objects(
+    state: State<AppState>,
+    scenario_id: String,
+    row_ids: Vec<i64>,
+    dx: f64,
+    dy: f64,
+) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let mut new_ids = Vec::new();
+    for row_id in row_ids {
+        let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+        translate_object(&mut obj, dx, dy, 0.0);
+        let new_id = repo.insert(&scenario_id, &obj).map_err(|e| e.to_string())?;
+        new_ids.push(new_id);
+    }
+    Ok(new_ids)
+}
+
+/// 旋转对象（绕基点 cx,cy，angle_deg 逆时针为正）
+#[tauri::command]
+pub fn rotate_objects(
+    state: State<AppState>,
+    row_ids: Vec<i64>,
+    cx: f64,
+    cy: f64,
+    angle_deg: f64,
+) -> Result<(), String> {
+    let angle_rad = angle_deg.to_radians();
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    for row_id in row_ids {
+        let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+        rotate_object(&mut obj, cx, cy, angle_rad);
+        repo.update(row_id, &obj).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 缩放对象（绕基点 cx,cy，factor > 0）
+#[tauri::command]
+pub fn scale_objects(
+    state: State<AppState>,
+    row_ids: Vec<i64>,
+    cx: f64,
+    cy: f64,
+    factor: f64,
+) -> Result<(), String> {
+    if factor <= 0.0 { return Err("scale factor must be positive".into()); }
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    for row_id in row_ids {
+        let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+        scale_object(&mut obj, cx, cy, factor);
+        repo.update(row_id, &obj).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 镜像对象（沿轴线 (x1,y1)-(x2,y2)），keep_original=true 时保留原对象
+/// 返回新对象 row_ids（keep_original=false 时为空 vec，对象已被就地修改）
+#[tauri::command]
+pub fn mirror_objects(
+    state: State<AppState>,
+    scenario_id: String,
+    row_ids: Vec<i64>,
+    x1: f64, y1: f64,
+    x2: f64, y2: f64,
+    keep_original: bool,
+) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let mut new_ids = Vec::new();
+    for row_id in row_ids {
+        let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+        mirror_object(&mut obj, x1, y1, x2, y2);
+        if keep_original {
+            let new_id = repo.insert(&scenario_id, &obj).map_err(|e| e.to_string())?;
+            new_ids.push(new_id);
+        } else {
+            repo.update(row_id, &obj).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(new_ids)
+}
+
+/// 修剪折线：只保留 [start_idx..=end_idx] 之间的顶点
+#[tauri::command]
+pub fn trim_polyline(
+    state: State<AppState>,
+    row_id: i64,
+    start_idx: usize,
+    end_idx: usize,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+    let verts = get_vertices(&obj)
+        .ok_or("object does not have polyline vertices")?;
+    let end = end_idx.min(verts.len().saturating_sub(1));
+    let start = start_idx.min(end);
+    if end - start < 1 { return Err("trim would leave fewer than 2 vertices".into()); }
+    let trimmed = verts[start..=end].to_vec();
+    set_vertices(&mut obj, trimmed);
+    repo.update(row_id, &obj).map_err(|e| e.to_string())
+}
+
+/// 打断折线：在第 seg_idx 段的 t 参数（0..1）处分裂为两个对象
+/// 返回 (原对象row_id, 新对象row_id)
+#[tauri::command]
+pub fn break_polyline(
+    state: State<AppState>,
+    scenario_id: String,
+    row_id: i64,
+    seg_idx: usize,
+    t: f64,
+) -> Result<(i64, i64), String> {
+    let t = t.clamp(0.001, 0.999);
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let obj = repo.get(row_id).map_err(|e| e.to_string())?;
+    let verts = get_vertices(&obj).ok_or("object does not have polyline vertices")?;
+    if seg_idx + 1 >= verts.len() {
+        return Err(format!("seg_idx {} out of range for {} vertices", seg_idx, verts.len()));
+    }
+    let a = verts[seg_idx];
+    let b = verts[seg_idx + 1];
+    let bp = [
+        a[0] + t * (b[0] - a[0]),
+        a[1] + t * (b[1] - a[1]),
+        a[2] + t * (b[2] - a[2]),
+    ];
+
+    // Part A: vertices[0..=seg_idx] + break_point
+    let mut part_a = verts[..=seg_idx].to_vec();
+    part_a.push(bp);
+
+    // Part B: break_point + vertices[seg_idx+1..]
+    let mut part_b = vec![bp];
+    part_b.extend_from_slice(&verts[seg_idx + 1..]);
+
+    // Update original to part_a, create new object for part_b
+    let mut obj_a = obj.clone();
+    set_vertices(&mut obj_a, part_a);
+    repo.update(row_id, &obj_a).map_err(|e| e.to_string())?;
+
+    let mut obj_b = obj.clone();
+    set_vertices(&mut obj_b, part_b);
+    let new_id = repo.insert(&scenario_id, &obj_b).map_err(|e| e.to_string())?;
+
+    Ok((row_id, new_id))
+}
+
+/// 合并两条折线（自动找最近端点拼接），row_id_b 被删除，row_id_a 变为合并结果
+#[tauri::command]
+pub fn join_polylines(
+    state: State<AppState>,
+    row_id_a: i64,
+    row_id_b: i64,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let obj_a = repo.get(row_id_a).map_err(|e| e.to_string())?;
+    let obj_b = repo.get(row_id_b).map_err(|e| e.to_string())?;
+    let va = get_vertices(&obj_a).ok_or("object A has no vertices")?;
+    let vb = get_vertices(&obj_b).ok_or("object B has no vertices")?;
+
+    // 检查四种端点组合，选距离最近的
+    let dist = |a: [f64;3], b: [f64;3]| {
+        ((a[0]-b[0]).powi(2) + (a[1]-b[1]).powi(2)).sqrt()
+    };
+    let d_ee = dist(va[va.len()-1], vb[0]);           // end_a -> start_b
+    let d_es = dist(va[va.len()-1], vb[vb.len()-1]);  // end_a -> end_b (b reversed)
+    let d_se = dist(va[0], vb[0]);                    // start_a -> start_b (a reversed)
+    let d_ss = dist(va[0], vb[vb.len()-1]);           // start_a -> end_b (both reversed concepts)
+
+    let min_d = d_ee.min(d_es).min(d_se).min(d_ss);
+    let mut merged = if (d_ee - min_d).abs() < 1e-9 {
+        let mut v = va.to_vec(); v.extend_from_slice(&vb); v
+    } else if (d_es - min_d).abs() < 1e-9 {
+        let mut v = va.to_vec(); let mut rb = vb.to_vec(); rb.reverse(); v.extend(rb); v
+    } else if (d_se - min_d).abs() < 1e-9 {
+        let mut ra = va.to_vec(); ra.reverse(); ra.extend_from_slice(&vb); ra
+    } else {
+        let mut ra = va.to_vec(); ra.reverse(); let mut rb = vb.to_vec(); rb.reverse(); ra.extend(rb); ra
+    };
+
+    // 如果接合点重合（距离 < 0.01m），去掉重复顶点
+    if merged.len() > 1 {
+        let mid = va.len(); // 接合处下标
+        if mid < merged.len() {
+            let p = merged[mid-1]; let q = merged[mid];
+            if dist(p, q) < 0.01 { merged.remove(mid); }
+        }
+    }
+
+    let mut obj_merged = obj_a.clone();
+    set_vertices(&mut obj_merged, merged);
+    repo.update(row_id_a, &obj_merged).map_err(|e| e.to_string())?;
+    repo.delete(row_id_b).map_err(|e| e.to_string())?;
+    Ok(row_id_a)
+}
+
+/// 偏移折线（平行复制），distance > 0 向左偏移（逆时针法线方向）
+/// 返回新对象的 row_id
+#[tauri::command]
+pub fn offset_polyline(
+    state: State<AppState>,
+    scenario_id: String,
+    row_id: i64,
+    distance: f64,
+) -> Result<i64, String> {
+    if distance.abs() < 1e-9 { return Err("offset distance must not be zero".into()); }
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let obj = repo.get(row_id).map_err(|e| e.to_string())?;
+    let verts = get_vertices(&obj).ok_or("object has no vertices")?;
+    let offset_verts = offset_vertices_miter(verts, distance);
+    let mut new_obj = obj.clone();
+    set_vertices(&mut new_obj, offset_verts);
+    let new_id = repo.insert(&scenario_id, &new_obj).map_err(|e| e.to_string())?;
+    Ok(new_id)
+}
+
+/// 延伸折线端点到指定坐标
+/// extend_start=true 在首部插入，false 在末尾追加
+#[tauri::command]
+pub fn extend_polyline(
+    state: State<AppState>,
+    row_id: i64,
+    extend_start: bool,
+    target_x: f64,
+    target_y: f64,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+    let mut verts = get_vertices(&obj).ok_or("object has no vertices")?;
+    let z = if extend_start { verts[0][2] } else { verts[verts.len()-1][2] };
+    let new_pt = [target_x, target_y, z];
+    if extend_start { verts.insert(0, new_pt); } else { verts.push(new_pt); }
+    set_vertices(&mut obj, verts);
+    repo.update(row_id, &obj).map_err(|e| e.to_string())
+}
+
+/// 在折线第 seg_idx 段的 t 处插入新顶点，返回新顶点下标
+#[tauri::command]
+pub fn insert_vertex(
+    state: State<AppState>,
+    row_id: i64,
+    seg_idx: usize,
+    t: f64,
+) -> Result<usize, String> {
+    let t = t.clamp(0.001, 0.999);
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+    let mut verts = get_vertices(&obj).ok_or("object has no vertices")?;
+    if seg_idx + 1 >= verts.len() {
+        return Err(format!("seg_idx {} out of range", seg_idx));
+    }
+    let a = verts[seg_idx]; let b = verts[seg_idx+1];
+    let new_pt = [a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1]), a[2]+t*(b[2]-a[2])];
+    let insert_at = seg_idx + 1;
+    verts.insert(insert_at, new_pt);
+    set_vertices(&mut obj, verts);
+    repo.update(row_id, &obj).map_err(|e| e.to_string())?;
+    Ok(insert_at)
+}
+
 } // pub mod commands
+
+// ─── CAD geometry helpers ─────────────────────────────────────────────────────
+
+/// 提取折线顶点为 Vec<[f64;3]>
+fn get_vertices(obj: &SceneObject) -> Option<Vec<[f64; 3]>> {
+    match obj {
+        SceneObject::RoadSource(rs) =>
+            Some(rs.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()),
+        SceneObject::Barrier(b) =>
+            Some(b.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()),
+        _ => None,
+    }
+}
+
+/// 将 Vec<[f64;3]> 写回对象的折线顶点
+fn set_vertices(obj: &mut SceneObject, verts: Vec<[f64; 3]>) {
+    let pts: Vec<Point3<f64>> = verts.iter().map(|v| Point3::new(v[0], v[1], v[2])).collect();
+    match obj {
+        SceneObject::RoadSource(rs) => rs.vertices = pts,
+        SceneObject::Barrier(b)     => b.vertices = pts,
+        _ => {}
+    }
+}
+
+/// 平移对象（修改内部几何）
+fn translate_object(obj: &mut SceneObject, dx: f64, dy: f64, dz: f64) {
+    match obj {
+        SceneObject::PointSource(ps) => {
+            ps.position = Point3::new(ps.position.x+dx, ps.position.y+dy, ps.position.z+dz);
+        }
+        _ => {
+            if let Some(verts) = get_vertices(obj) {
+                let moved: Vec<[f64;3]> = verts.iter().map(|v| [v[0]+dx, v[1]+dy, v[2]+dz]).collect();
+                set_vertices(obj, moved);
+            }
+        }
+    }
+}
+
+/// 旋转对象（绕 (cx,cy)，angle_rad 逆时针）
+fn rotate_object(obj: &mut SceneObject, cx: f64, cy: f64, angle_rad: f64) {
+    let cos_a = angle_rad.cos();
+    let sin_a = angle_rad.sin();
+    let rot = |x: f64, y: f64| -> (f64, f64) {
+        let dx = x - cx; let dy = y - cy;
+        (cx + dx*cos_a - dy*sin_a, cy + dx*sin_a + dy*cos_a)
+    };
+    match obj {
+        SceneObject::PointSource(ps) => {
+            let (nx, ny) = rot(ps.position.x, ps.position.y);
+            ps.position = Point3::new(nx, ny, ps.position.z);
+        }
+        _ => {
+            if let Some(verts) = get_vertices(obj) {
+                let rotated: Vec<[f64;3]> = verts.iter().map(|v| {
+                    let (nx, ny) = rot(v[0], v[1]); [nx, ny, v[2]]
+                }).collect();
+                set_vertices(obj, rotated);
+            }
+        }
+    }
+}
+
+/// 缩放对象（绕 (cx,cy)，factor）
+fn scale_object(obj: &mut SceneObject, cx: f64, cy: f64, factor: f64) {
+    let sc = |x: f64, y: f64| -> (f64, f64) {
+        (cx + (x-cx)*factor, cy + (y-cy)*factor)
+    };
+    match obj {
+        SceneObject::PointSource(ps) => {
+            let (nx, ny) = sc(ps.position.x, ps.position.y);
+            ps.position = Point3::new(nx, ny, ps.position.z);
+        }
+        _ => {
+            if let Some(verts) = get_vertices(obj) {
+                let scaled: Vec<[f64;3]> = verts.iter().map(|v| {
+                    let (nx, ny) = sc(v[0], v[1]); [nx, ny, v[2]]
+                }).collect();
+                set_vertices(obj, scaled);
+            }
+        }
+    }
+}
+
+/// 镜像对象（关于直线 (x1,y1)-(x2,y2)）
+fn mirror_object(obj: &mut SceneObject, x1: f64, y1: f64, x2: f64, y2: f64) {
+    let mir = |x: f64, y: f64| -> (f64, f64) {
+        let dx = x2-x1; let dy = y2-y1;
+        let len_sq = dx*dx + dy*dy;
+        if len_sq < 1e-12 { return (x, y); }
+        let t = ((x-x1)*dx + (y-y1)*dy) / len_sq;
+        let fx = x1 + t*dx; let fy = y1 + t*dy;
+        (2.0*fx - x, 2.0*fy - y)
+    };
+    match obj {
+        SceneObject::PointSource(ps) => {
+            let (nx, ny) = mir(ps.position.x, ps.position.y);
+            ps.position = Point3::new(nx, ny, ps.position.z);
+        }
+        _ => {
+            if let Some(verts) = get_vertices(obj) {
+                let mirrored: Vec<[f64;3]> = verts.iter().map(|v| {
+                    let (nx, ny) = mir(v[0], v[1]); [nx, ny, v[2]]
+                }).collect();
+                set_vertices(obj, mirrored);
+            }
+        }
+    }
+}
+
+/// Miter joint 偏移折线顶点
+fn offset_vertices_miter(verts: Vec<[f64; 3]>, distance: f64) -> Vec<[f64; 3]> {
+    let n = verts.len();
+    if n < 2 { return verts; }
+    let seg_normal = |a: [f64;3], b: [f64;3]| -> [f64; 2] {
+        let dx = b[0]-a[0]; let dy = b[1]-a[1];
+        let len = (dx*dx+dy*dy).sqrt().max(1e-12);
+        [-dy/len, dx/len]  // 左法线（逆时针）
+    };
+    let mut result = Vec::with_capacity(n);
+    for i in 0..n {
+        let normal = if i == 0 {
+            seg_normal(verts[0], verts[1])
+        } else if i == n-1 {
+            seg_normal(verts[n-2], verts[n-1])
+        } else {
+            let n1 = seg_normal(verts[i-1], verts[i]);
+            let n2 = seg_normal(verts[i], verts[i+1]);
+            // Miter：两段法线的平均，长度调整
+            let dot = n1[0]*n2[0] + n1[1]*n2[1];
+            let miter_scale = if (1.0 + dot).abs() < 1e-6 { 1.0 }
+                              else { 1.0 / (1.0 + dot).sqrt() };
+            // 钳制 miter 长度（防止锐角产生过长尖刺）
+            let clamped = miter_scale.min(5.0);
+            [(n1[0]+n2[0]) * clamped * 0.5, (n1[1]+n2[1]) * clamped * 0.5]
+        };
+        result.push([
+            verts[i][0] + normal[0] * distance,
+            verts[i][1] + normal[1] * distance,
+            verts[i][2],
+        ]);
+    }
+    result
+}
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -742,6 +1177,17 @@ pub fn run() {
             commands::delete_object,
             commands::run_calculation,
             commands::export_file,
+            commands::move_objects,
+            commands::copy_objects,
+            commands::rotate_objects,
+            commands::scale_objects,
+            commands::mirror_objects,
+            commands::trim_polyline,
+            commands::break_polyline,
+            commands::join_polylines,
+            commands::offset_polyline,
+            commands::extend_polyline,
+            commands::insert_vertex,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
