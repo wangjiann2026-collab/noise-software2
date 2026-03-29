@@ -11,6 +11,7 @@ members = [
     "crates/noise-wasm",
     "apps/noise-cli",
     "apps/noise-api",
+    "apps/noise-desktop/src-tauri",
 ]
 
 [workspace.package]

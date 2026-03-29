@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tauri.app/config/v2/capability.schema.json",
+  "identifier": "default",
+  "description": "Default capability for noise-desktop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:default",
+    "fs:read-all",
+    "fs:write-all",
+    "fs:allow-mkdir",
+    "shell:default",
+    "shell:allow-open"
+  ]
+}

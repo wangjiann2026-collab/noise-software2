@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noise Mapping Desktop</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #0d1117;
+  --panel:    #161b22;
+  --border:   #30363d;
+  --accent:   #1f6feb;
+  --accent2:  #58a6ff;
+  --danger:   #f85149;
+  --success:  #3fb950;
+  --warn:     #d29922;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+  --btn:      #21262d;
+  --btn-h:    #30363d;
+}
+body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+       background: var(--bg); color: var(--text); height: 100vh;
+       display: flex; flex-direction: column; overflow: hidden; font-size: 13px; }
+
+/* ── Toolbar ──────────────────────────────────────────────── */
+#toolbar {
+  height: 48px; background: var(--panel); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 12px; gap: 8px; flex-shrink: 0;
+}
+#toolbar .logo { font-weight: 700; font-size: 15px; color: var(--accent2);
+                 letter-spacing: .5px; margin-right: 8px; }
+#toolbar .logo span { color: var(--muted); font-weight: 400; }
+.sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+.tbtn {
+  padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--btn); color: var(--text); cursor: pointer; font-size: 12px;
+  transition: background .15s; white-space: nowrap;
+}
+.tbtn:hover { background: var(--btn-h); }
+.tbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tbtn.primary:hover { filter: brightness(1.15); }
+.tbtn.danger  { border-color: var(--danger); color: var(--danger); }
+.drop { position: relative; }
+.drop-menu {
+  display: none; position: absolute; top: 100%; left: 0; margin-top: 4px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  min-width: 140px; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.drop:hover .drop-menu { display: block; }
+.drop-menu a {
+  display: block; padding: 7px 14px; color: var(--text); text-decoration: none;
+  cursor: pointer; transition: background .1s;
+}
+.drop-menu a:hover { background: var(--btn-h); }
+#toolbar .spacer { flex: 1; }
+#toolbar .info { color: var(--muted); font-size: 12px; }
+
+/* ── Main layout ───────────────────────────────────────────── */
+#main { flex: 1; display: grid; grid-template-columns: 260px 1fr 280px;
+        overflow: hidden; }
+
+/* ── Panels ─────────────────────────────────────────────────── */
+.panel {
+  background: var(--panel); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.panel:last-child { border-right: none; border-left: 1px solid var(--border); }
+.panel-hdr {
+  padding: 10px 12px 8px; font-weight: 600; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .8px; color: var(--muted); border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.panel-body { flex: 1; overflow-y: auto; padding: 8px 0; }
+.panel-body::-webkit-scrollbar { width: 4px; }
+.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Left sidebar ───────────────────────────────────────────── */
+.section-hdr {
+  padding: 6px 12px 4px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.section-hdr .add-btn {
+  background: none; border: none; color: var(--accent2); cursor: pointer;
+  font-size: 16px; line-height: 1; padding: 0 2px;
+}
+.section-hdr .add-btn:hover { color: #fff; }
+.project-row {
+  display: flex; align-items: center; padding: 5px 10px 5px 12px;
+  cursor: pointer; gap: 6px; transition: background .1s; border-radius: 4px;
+  margin: 0 4px;
+}
+.project-row:hover { background: var(--btn-h); }
+.project-row.active { background: rgba(31,111,235,.2); color: var(--accent2); }
+.project-row .arrow { color: var(--muted); font-size: 10px; }
+.project-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-row .del { background: none; border: none; color: var(--muted);
+                    cursor: pointer; font-size: 14px; padding: 0 2px; }
+.project-row .del:hover { color: var(--danger); }
+.scenario-row {
+  display: flex; align-items: center; padding: 4px 10px 4px 28px;
+  cursor: pointer; gap: 6px; color: var(--muted); transition: background .1s;
+  border-radius: 4px; margin: 0 4px;
+}
+.scenario-row:hover { background: var(--btn-h); color: var(--text); }
+.scenario-row.active { background: rgba(31,111,235,.15); color: var(--accent2); }
+.scenario-row .badge {
+  font-size: 9px; padding: 1px 4px; border-radius: 3px; background: var(--accent);
+  color: #fff; font-weight: 600; text-transform: uppercase;
+}
+.divider { height: 1px; background: var(--border); margin: 8px 0; }
+.obj-row {
+  display: flex; align-items: center; padding: 4px 10px 4px 16px;
+  gap: 6px; transition: background .1s; border-radius: 4px; margin: 0 4px;
+}
+.obj-row:hover { background: var(--btn-h); }
+.obj-row .type-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.obj-row .obj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obj-row .obj-type { font-size: 10px; color: var(--muted); }
+.obj-row .del { background: none; border: none; color: var(--muted);
+               cursor: pointer; font-size: 13px; padding: 0 2px; }
+.obj-row .del:hover { color: var(--danger); }
+.dot-ps  { background: #58a6ff; }
+.dot-road { background: #3fb950; }
+.dot-bar { background: #f0883e; }
+.dot-other { background: var(--muted); }
+.empty-state { text-align: center; color: var(--muted); padding: 20px 12px;
+               font-size: 12px; line-height: 1.6; }
+
+/* ── Map area ───────────────────────────────────────────────── */
+#map-area { display: flex; flex-direction: column; background: #0a0e14;
+            overflow: hidden; position: relative; }
+#map-container { flex: 1; position: relative; overflow: hidden; }
+#map-canvas { display: block; }
+#map-overlay {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px; pointer-events: none;
+}
+#map-overlay.hidden { display: none; }
+#map-overlay p { color: var(--muted); }
+#map-overlay p:first-child { font-size: 15px; color: #444; }
+#legend-bar {
+  height: 36px; flex-shrink: 0; background: var(--panel);
+  border-top: 1px solid var(--border); padding: 4px 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+#legend-canvas { height: 16px; flex: 1; border-radius: 3px; }
+.legend-labels { display: flex; justify-content: space-between; width: 100%;
+                 font-size: 10px; color: var(--muted); }
+
+/* ── Right panel ─────────────────────────────────────────────── */
+#right-panel { overflow-y: auto; padding: 12px; display: flex;
+               flex-direction: column; gap: 14px; }
+#right-panel::-webkit-scrollbar { width: 4px; }
+#right-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.card {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px;
+}
+.card-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .7px; color: var(--muted); margin-bottom: 10px;
+}
+.form-group { margin-bottom: 8px; }
+.form-group label { display: block; font-size: 11px; color: var(--muted);
+                    margin-bottom: 3px; }
+.form-group input, .form-group select {
+  width: 100%; padding: 5px 8px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--text); font-size: 12px; outline: none;
+}
+.form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.btn-full {
+  width: 100%; padding: 7px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--btn); color: var(--text); cursor: pointer; font-size: 12px;
+  font-weight: 600; transition: background .15s;
+}
+.btn-full:hover { background: var(--btn-h); }
+.btn-full.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-full.primary:hover { filter: brightness(1.15); }
+.btn-full.success { background: #1a3a1a; border-color: var(--success); color: var(--success); }
+.btn-full.success:hover { background: #234523; }
+
+.stat-row { display: flex; justify-content: space-between; align-items: center;
+            padding: 4px 0; border-bottom: 1px solid var(--border); }
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: var(--muted); font-size: 11px; }
+.stat-value { font-weight: 700; font-size: 13px; }
+.stat-value.high  { color: var(--danger); }
+.stat-value.mid   { color: var(--warn); }
+.stat-value.low   { color: var(--success); }
+
+/* ── Status bar ─────────────────────────────────────────────── */
+#statusbar {
+  height: 26px; background: var(--panel); border-top: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 12px; gap: 16px;
+  font-size: 11px; color: var(--muted); flex-shrink: 0;
+}
+#statusbar .status-msg { flex: 1; }
+#statusbar .status-chip {
+  padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 600;
+}
+.chip-ready { background: #1a3a1a; color: var(--success); }
+.chip-run   { background: #1a2a3a; color: var(--accent2); }
+.chip-err   { background: #3a1a1a; color: var(--danger); }
+</style>
+</head>
+<body>
+
+<!-- ── Toolbar ── -->
+<div id="toolbar">
+  <div class="logo">🔊 Noise<span>Desktop</span></div>
+  <div class="sep"></div>
+  <button class="tbtn primary" onclick="newProject()" title="Create a new project (Ctrl+N)">+ New Project</button>
+  <button class="tbtn" onclick="runCalculation()" id="run-btn" title="Run noise calculation (Ctrl+R)">▶ Run Calculation</button>
+  <div class="sep"></div>
+  <div class="drop">
+    <button class="tbtn">⬇ Export ▾</button>
+    <div class="drop-menu">
+      <a onclick="exportResult('geojson')">GeoJSON (Isolines)</a>
+      <a onclick="exportResult('asc')">ESRI ASCII Grid</a>
+      <a onclick="exportResult('csv')">CSV (x,y,level)</a>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <span class="info" id="toolbar-info">No project selected</span>
+</div>
+
+<!-- ── Main ── -->
+<div id="main">
+
+  <!-- Left sidebar -->
+  <div class="panel" id="left-panel">
+    <div class="panel-hdr">Explorer</div>
+    <div class="panel-body">
+      <div class="section-hdr">
+        Projects
+        <button class="add-btn" onclick="newProject()" title="New project">+</button>
+      </div>
+      <div id="project-tree">
+        <div class="empty-state">No projects yet.<br>Click + to create one.</div>
+      </div>
+      <div class="divider"></div>
+      <div class="section-hdr">
+        Objects in Scene
+        <span id="obj-count" style="font-size:10px;color:var(--muted)">0</span>
+      </div>
+      <div id="object-list">
+        <div class="empty-state" id="obj-empty">Select a scenario<br>to see its objects.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map area -->
+  <div id="map-area">
+    <div id="map-container">
+      <canvas id="map-canvas"></canvas>
+      <div id="map-overlay">
+        <p>🗺 No Calculation Results</p>
+        <p>Add noise sources, then click<br><strong>▶ Run Calculation</strong></p>
+      </div>
+    </div>
+    <div id="legend-bar">
+      <span style="font-size:10px;color:var(--muted);white-space:nowrap">dB(A)</span>
+      <canvas id="legend-canvas"></canvas>
+      <div style="position:relative;flex:1">
+        <div class="legend-labels" id="legend-labels">
+          <span>35</span><span>40</span><span>45</span><span>50</span>
+          <span>55</span><span>60</span><span>65</span><span>70</span><span>75+</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right panel -->
+  <div class="panel" style="border-right:none;border-left:1px solid var(--border)">
+    <div class="panel-hdr">Properties</div>
+    <div id="right-panel">
+
+      <!-- Add object card -->
+      <div class="card">
+        <div class="card-title">Add Object</div>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="obj-type">
+            <option value="point">Point Source</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input id="obj-name" placeholder="e.g. Factory A" type="text">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>X (m)</label>
+            <input id="obj-x" type="number" value="100" step="1">
+          </div>
+          <div class="form-group">
+            <label>Y (m)</label>
+            <input id="obj-y" type="number" value="100" step="1">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Height Z (m)</label>
+            <input id="obj-z" type="number" value="1.5" step="0.5">
+          </div>
+          <div class="form-group">
+            <label>Lw (dB)</label>
+            <input id="obj-lw" type="number" value="80" step="1" min="0" max="140">
+          </div>
+        </div>
+        <button class="btn-full" onclick="addObject()" id="add-obj-btn">+ Add to Scene</button>
+        <div id="add-note" style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;">
+          Select a scenario first
+        </div>
+      </div>
+
+      <!-- Calculation card -->
+      <div class="card">
+        <div class="card-title">Calculation Settings</div>
+        <div class="form-group">
+          <label>Noise Metric</label>
+          <select id="calc-metric">
+            <option value="Lden">Lden (EU Day-Evening-Night)</option>
+            <option value="Ldn">Ldn (FHWA Day-Night)</option>
+            <option value="Leq">Leq (Equivalent)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Resolution (m)</label>
+            <input id="calc-resolution" type="number" value="10" step="5" min="1" max="100">
+          </div>
+          <div class="form-group">
+            <label>Grid size (m)</label>
+            <input id="calc-extent" type="number" value="500" step="100" min="100">
+          </div>
+        </div>
+        <button class="btn-full primary" onclick="runCalculation()" id="run-btn2">▶ Run Calculation</button>
+      </div>
+
+      <!-- Results card -->
+      <div class="card" id="results-card">
+        <div class="card-title">Results</div>
+        <div id="no-results" style="color:var(--muted);font-size:12px;text-align:center;padding:8px 0">
+          No results yet
+        </div>
+        <div id="result-stats" style="display:none">
+          <div class="stat-row">
+            <span class="stat-label">Metric</span>
+            <span class="stat-value" id="result-metric">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Maximum</span>
+            <span class="stat-value high" id="result-max">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Mean</span>
+            <span class="stat-value mid" id="result-mean">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Minimum</span>
+            <span class="stat-value low" id="result-min">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Grid</span>
+            <span class="stat-value" id="result-grid">—</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Status bar ── -->
+<div id="statusbar">
+  <span class="status-msg" id="status-bar">Ready</span>
+  <span class="status-chip chip-ready" id="status-chip">READY</span>
+  <span>|</span>
+  <span id="status-scenario" style="color:var(--muted)">No scenario selected</span>
+</div>
+
+<script>
+// ── Tauri bridge ──────────────────────────────────────────────────────────────
+const invoke = window.__TAURI__?.core?.invoke
+    ?? (async (cmd, args) => { throw new Error('Not running in Tauri: ' + cmd); });
+const saveDialog = window.__TAURI__?.dialog?.save
+    ?? (async () => prompt('Enter file path to save:'));
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let projects = [];
+let currentProjectId = null;
+let currentScenarioId = null;
+let currentScenarioName = null;
+let currentCalcResult = null;
+let objects = [];
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    resizeCanvas();
+    drawLegend();
+    drawEmptyMap();
+    window.addEventListener('resize', () => { resizeCanvas(); if (currentCalcResult) renderNoiseMap(currentCalcResult); else drawEmptyMap(); });
+    loadProjects();
+});
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+async function loadProjects() {
+    try {
+        const res = await invoke('list_projects');
+        projects = Array.isArray(res) ? res : (res.items || []);
+        renderProjectTree();
+    } catch(e) { showStatus('Failed to load projects: ' + e, 'err'); }
+}
+
+function renderProjectTree() {
+    const tree = document.getElementById('project-tree');
+    if (projects.length === 0) {
+        tree.innerHTML = '<div class="empty-state">No projects yet.<br>Click + to create one.</div>';
+        return;
+    }
+    tree.innerHTML = projects.map(p => `
+      <div>
+        <div class="project-row ${p.id === currentProjectId ? 'active' : ''}"
+             onclick="toggleProject('${p.id}')">
+          <span class="arrow" id="arr-${p.id}">▶</span>
+          <span class="name">${esc(p.name)}</span>
+          <button class="del" onclick="event.stopPropagation();deleteProject('${p.id}')" title="Delete project">🗑</button>
+        </div>
+        <div id="subtree-${p.id}" style="display:none"></div>
+      </div>
+    `).join('');
+    if (currentProjectId) toggleProject(currentProjectId, true);
+}
+
+async function toggleProject(pid, expand) {
+    const sub = document.getElementById('subtree-' + pid);
+    const arr = document.getElementById('arr-' + pid);
+    if (!sub) return;
+    const isOpen = sub.style.display !== 'none';
+    if (isOpen && !expand) {
+        sub.style.display = 'none';
+        arr.textContent = '▶';
+        return;
+    }
+    arr.textContent = '▼';
+    sub.style.display = 'block';
+    currentProjectId = pid;
+    renderProjectTree();
+    try {
+        const detail = await invoke('get_project', { projectId: pid });
+        sub.innerHTML = `
+          <div class="scenario-row ${detail.base_scenario.id === currentScenarioId ? 'active' : ''}"
+               onclick="selectScenario('${detail.base_scenario.id}','${esc(detail.base_scenario.name)}')">
+            <span class="badge">base</span>
+            <span>${esc(detail.base_scenario.name)}</span>
+          </div>
+          ${(detail.variants || []).map(v => `
+            <div class="scenario-row ${v.id === currentScenarioId ? 'active' : ''}"
+                 onclick="selectScenario('${v.id}','${esc(v.name)}')">
+              <span>↳</span><span>${esc(v.name)}</span>
+            </div>
+          `).join('')}
+        `;
+    } catch(e) { sub.innerHTML = `<div class="empty-state">${e}</div>`; }
+}
+
+async function newProject() {
+    const name = prompt('Project name:');
+    if (!name?.trim()) return;
+    try {
+        await invoke('new_project', { name: name.trim(), crsEpsg: 32650 });
+        showStatus('Created project: ' + name);
+        await loadProjects();
+    } catch(e) { showStatus('Error: ' + e, 'err'); }
+}
+
+async function deleteProject(pid) {
+    if (!confirm('Delete this project and all its data?')) return;
+    try {
+        await invoke('delete_project', { projectId: pid });
+        if (currentProjectId === pid) { currentProjectId = null; currentScenarioId = null; clearObjects(); }
+        showStatus('Project deleted');
+        await loadProjects();
+    } catch(e) { showStatus('Error: ' + e, 'err'); }
+}
+
+// ── Scenarios ─────────────────────────────────────────────────────────────────
+async function selectScenario(sid, name) {
+    currentScenarioId = sid;
+    currentScenarioName = name;
+    document.getElementById('status-scenario').textContent = name;
+    document.getElementById('add-note').textContent = 'Scenario: ' + name;
+    document.getElementById('toolbar-info').textContent = name;
+    renderProjectTree();
+    await loadObjects();
+    showStatus('Selected: ' + name);
+}
+
+// ── Objects ───────────────────────────────────────────────────────────────────
+async function loadObjects() {
+    if (!currentScenarioId) return;
+    try {
+        objects = await invoke('list_objects', { scenarioId: currentScenarioId });
+        renderObjectList();
+    } catch(e) { showStatus('Error loading objects: ' + e, 'err'); }
+}
+
+function renderObjectList() {
+    const list = document.getElementById('object-list');
+    const empty = document.getElementById('obj-empty');
+    document.getElementById('obj-count').textContent = objects.length;
+    if (objects.length === 0) {
+        list.innerHTML = '<div class="empty-state">No objects in this scenario.<br>Add sources using the panel →</div>';
+        return;
+    }
+    list.innerHTML = objects.map(o => {
+        const dot = dotClass(o.object_type);
+        const typeShort = o.object_type.replace('ObjectType::', '').replace('PointSource', 'PS').replace('RoadSource', 'Road').replace('Barrier', 'Bar').replace('Building', 'Bldg');
+        return `
+          <div class="obj-row">
+            <div class="type-dot ${dot}"></div>
+            <span class="obj-name">${esc(o.name)}</span>
+            <span class="obj-type">${typeShort}</span>
+            <button class="del" onclick="deleteObject(${o.row_id})" title="Remove">✕</button>
+          </div>
+        `;
+    }).join('');
+}
+
+function clearObjects() {
+    objects = [];
+    document.getElementById('object-list').innerHTML = '<div class="empty-state" id="obj-empty">Select a scenario<br>to see its objects.</div>';
+    document.getElementById('obj-count').textContent = '0';
+}
+
+function dotClass(type) {
+    if (type.includes('PointSource')) return 'dot-ps';
+    if (type.includes('Road')) return 'dot-road';
+    if (type.includes('Barrier')) return 'dot-bar';
+    return 'dot-other';
+}
+
+async function addObject() {
+    if (!currentScenarioId) { showStatus('Select a scenario first', 'err'); return; }
+    const name = document.getElementById('obj-name').value.trim() || 'Source';
+    const x = parseFloat(document.getElementById('obj-x').value) || 100;
+    const y = parseFloat(document.getElementById('obj-y').value) || 100;
+    const z = parseFloat(document.getElementById('obj-z').value) || 1.5;
+    const lw = parseFloat(document.getElementById('obj-lw').value) || 80;
+    try {
+        await invoke('add_point_source', { scenarioId: currentScenarioId, name, x, y, z, lwDb: lw });
+        await loadObjects();
+        showStatus('Added: ' + name, 'ok');
+        document.getElementById('obj-name').value = '';
+    } catch(e) { showStatus('Error: ' + e, 'err'); }
+}
+
+async function deleteObject(rowId) {
+    try {
+        await invoke('delete_object', { rowId });
+        await loadObjects();
+        showStatus('Object removed');
+    } catch(e) { showStatus('Error: ' + e, 'err'); }
+}
+
+// ── Calculation ───────────────────────────────────────────────────────────────
+async function runCalculation() {
+    if (!currentScenarioId) { showStatus('Select a scenario first', 'err'); return; }
+    const metric = document.getElementById('calc-metric').value;
+    const res = parseFloat(document.getElementById('calc-resolution').value) || 10;
+    const ext = parseFloat(document.getElementById('calc-extent').value) || 500;
+
+    document.getElementById('run-btn').textContent = '⏳ Running…';
+    document.getElementById('run-btn2').textContent = '⏳ Running…';
+    setChip('run', 'RUNNING');
+    showStatus('Running ' + metric + ' calculation…');
+
+    try {
+        const result = await invoke('run_calculation', {
+            scenarioId: currentScenarioId,
+            metric,
+            resolutionM: res,
+            xmin: 0, ymin: 0,
+            xmax: ext, ymax: ext,
+        });
+        currentCalcResult = result;
+        renderNoiseMap(result);
+        document.getElementById('result-metric').textContent = result.metric;
+        document.getElementById('result-max').textContent  = result.max_db.toFixed(1) + ' dB';
+        document.getElementById('result-mean').textContent = result.mean_db.toFixed(1) + ' dB';
+        document.getElementById('result-min').textContent  = result.min_db.toFixed(1) + ' dB';
+        document.getElementById('result-grid').textContent = result.nx + '×' + result.ny + ' @ ' + result.cellsize + 'm';
+        document.getElementById('no-results').style.display = 'none';
+        document.getElementById('result-stats').style.display = 'block';
+        document.getElementById('map-overlay').classList.add('hidden');
+        setChip('ready', 'DONE');
+        showStatus('Complete: ' + result.min_db.toFixed(1) + '–' + result.max_db.toFixed(1) + ' dB(A) ' + metric, 'ok');
+    } catch(e) {
+        setChip('err', 'ERROR');
+        showStatus('Calculation failed: ' + e, 'err');
+    } finally {
+        document.getElementById('run-btn').textContent = '▶ Run Calculation';
+        document.getElementById('run-btn2').textContent = '▶ Run Calculation';
+    }
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+async function exportResult(format) {
+    if (!currentCalcResult) { showStatus('Run a calculation first', 'err'); return; }
+    const extMap = { geojson: 'geojson', asc: 'asc', csv: 'csv' };
+    const ext = extMap[format] || format;
+    try {
+        const path = await saveDialog({
+            filters: [{ name: format.toUpperCase(), extensions: [ext] }],
+            defaultPath: 'noise_results.' + ext,
+        });
+        if (!path) return;
+        await invoke('export_file', { calcId: currentCalcResult.calc_id, format, filePath: path });
+        showStatus('Exported → ' + path, 'ok');
+    } catch(e) { showStatus('Export error: ' + e, 'err'); }
+}
+
+// ── Noise map rendering ───────────────────────────────────────────────────────
+const COLOR_STOPS = [
+    [0.00, [0,   0,   200]],
+    [0.20, [0,   160, 255]],
+    [0.40, [0,   200, 100]],
+    [0.60, [220, 220, 0  ]],
+    [0.80, [255, 120, 0  ]],
+    [1.00, [255, 0,   0  ]],
+];
+
+function dbToColor(t) {
+    for (let i = 1; i < COLOR_STOPS.length; i++) {
+        if (t <= COLOR_STOPS[i][0]) {
+            const [t0, c0] = COLOR_STOPS[i-1], [t1, c1] = COLOR_STOPS[i];
+            const f = (t - t0) / (t1 - t0);
+            const r = Math.round(c0[0] + f*(c1[0]-c0[0]));
+            const g = Math.round(c0[1] + f*(c1[1]-c0[1]));
+            const b = Math.round(c0[2] + f*(c1[2]-c0[2]));
+            return `rgb(${r},${g},${b})`;
+        }
+    }
+    return 'rgb(255,0,0)';
+}
+
+function renderNoiseMap(result) {
+    const canvas = document.getElementById('map-canvas');
+    const ctx = canvas.getContext('2d');
+    const { nx, ny, levels, min_db, max_db } = result;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#0a0e14';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const cellW = canvas.width / nx;
+    const cellH = canvas.height / ny;
+    const range = (max_db - min_db) || 1;
+
+    for (let row = 0; row < ny; row++) {
+        for (let col = 0; col < nx; col++) {
+            const val = levels[row * nx + col];
+            if (!isFinite(val) || val <= 0) continue;
+            const t = Math.max(0, Math.min(1, (val - min_db) / range));
+            ctx.fillStyle = dbToColor(t);
+            // Y is flipped: row 0 = south (bottom of canvas)
+            ctx.fillRect(col * cellW, (ny - 1 - row) * cellH, cellW + 0.5, cellH + 0.5);
+        }
+    }
+
+    // Draw scale overlay (optional grid lines at major ticks)
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    const step = Math.max(1, Math.floor(nx / 10));
+    for (let c = 0; c <= nx; c += step) {
+        ctx.beginPath(); ctx.moveTo(c*cellW, 0); ctx.lineTo(c*cellW, canvas.height); ctx.stroke();
+    }
+    const rstep = Math.max(1, Math.floor(ny / 10));
+    for (let r = 0; r <= ny; r += rstep) {
+        ctx.beginPath(); ctx.moveTo(0, r*cellH); ctx.lineTo(canvas.width, r*cellH); ctx.stroke();
+    }
+}
+
+function drawEmptyMap() {
+    const canvas = document.getElementById('map-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0a0e14';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Grid pattern
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width, y); ctx.stroke();
+    }
+}
+
+function drawLegend() {
+    const lc = document.getElementById('legend-canvas');
+    const ctx = lc.getContext('2d');
+    const w = lc.clientWidth || 300;
+    lc.width = w; lc.height = 16;
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    COLOR_STOPS.forEach(([t, [r,g,b]]) => grad.addColorStop(t, `rgb(${r},${g},${b})`));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, 16);
+}
+
+function resizeCanvas() {
+    const canvas = document.getElementById('map-canvas');
+    const container = document.getElementById('map-container');
+    canvas.width  = container.clientWidth  || 800;
+    canvas.height = container.clientHeight || 600;
+    if (currentCalcResult) renderNoiseMap(currentCalcResult);
+    else drawEmptyMap();
+    drawLegend();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function showStatus(msg, type) {
+    document.getElementById('status-bar').textContent = msg;
+    if (type === 'ok')  setChip('ready', 'OK');
+    if (type === 'err') setChip('err', 'ERROR');
+}
+
+function setChip(type, label) {
+    const chip = document.getElementById('status-chip');
+    chip.textContent = label;
+    chip.className = 'status-chip chip-' + type;
+}
+
+function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') { e.preventDefault(); runCalculation(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); newProject(); }
+});
+</script>
+</body>
+</html>
