@@ -3,750 +3,1072 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Noise Mapping Desktop</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg:       #0d1117;
-  --panel:    #161b22;
-  --border:   #30363d;
-  --accent:   #1f6feb;
-  --accent2:  #58a6ff;
-  --danger:   #f85149;
-  --success:  #3fb950;
-  --warn:     #d29922;
-  --text:     #e6edf3;
-  --muted:    #8b949e;
-  --btn:      #21262d;
-  --btn-h:    #30363d;
+<title>Noise CAD Desktop</title>
+<style id="app-style">
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--panel:#161b22;--border:#30363d;
+  --accent:#1f6feb;--accent2:#58a6ff;
+  --danger:#f85149;--success:#3fb950;--warn:#d29922;
+  --text:#e6edf3;--muted:#8b949e;--btn:#21262d;--btn-h:#30363d;
 }
-body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-       background: var(--bg); color: var(--text); height: 100vh;
-       display: flex; flex-direction: column; overflow: hidden; font-size: 13px; }
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+     background:var(--bg);color:var(--text);height:100vh;
+     display:flex;flex-direction:column;overflow:hidden;font-size:13px;user-select:none}
 
-/* ── Toolbar ──────────────────────────────────────────────── */
-#toolbar {
-  height: 48px; background: var(--panel); border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; padding: 0 12px; gap: 8px; flex-shrink: 0;
-}
-#toolbar .logo { font-weight: 700; font-size: 15px; color: var(--accent2);
-                 letter-spacing: .5px; margin-right: 8px; }
-#toolbar .logo span { color: var(--muted); font-weight: 400; }
-.sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
-.tbtn {
-  padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--btn); color: var(--text); cursor: pointer; font-size: 12px;
-  transition: background .15s; white-space: nowrap;
-}
-.tbtn:hover { background: var(--btn-h); }
-.tbtn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.tbtn.primary:hover { filter: brightness(1.15); }
-.tbtn.danger  { border-color: var(--danger); color: var(--danger); }
-.drop { position: relative; }
-.drop-menu {
-  display: none; position: absolute; top: 100%; left: 0; margin-top: 4px;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-  min-width: 140px; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,.5);
-}
-.drop:hover .drop-menu { display: block; }
-.drop-menu a {
-  display: block; padding: 7px 14px; color: var(--text); text-decoration: none;
-  cursor: pointer; transition: background .1s;
-}
-.drop-menu a:hover { background: var(--btn-h); }
-#toolbar .spacer { flex: 1; }
-#toolbar .info { color: var(--muted); font-size: 12px; }
+/* ── Toolbar ── */
+#toolbar{height:48px;background:var(--panel);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 10px;gap:5px;flex-shrink:0;overflow-x:auto}
+.logo{font-weight:700;font-size:15px;color:var(--accent2);letter-spacing:.5px;white-space:nowrap;margin-right:4px}
+.logo span{color:var(--muted);font-weight:400}
+.sep{width:1px;height:22px;background:var(--border);margin:0 3px;flex-shrink:0}
+.spacer{flex:1}
+.tool-group-label{font-size:10px;color:var(--muted);letter-spacing:.5px;white-space:nowrap;padding:0 2px}
 
-/* ── Main layout ───────────────────────────────────────────── */
-#main { flex: 1; display: grid; grid-template-columns: 260px 1fr 280px;
-        overflow: hidden; }
+.tbtn{padding:5px 10px;border-radius:5px;border:1px solid var(--border);
+  background:var(--btn);color:var(--text);cursor:pointer;font-size:12px;
+  transition:background .12s;white-space:nowrap;flex-shrink:0}
+.tbtn:hover{background:var(--btn-h)}
+.tbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.tbtn.primary:hover{filter:brightness(1.12)}
+.tbtn.danger{border-color:var(--danger);color:var(--danger)}
 
-/* ── Panels ─────────────────────────────────────────────────── */
-.panel {
-  background: var(--panel); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.panel:last-child { border-right: none; border-left: 1px solid var(--border); }
-.panel-hdr {
-  padding: 10px 12px 8px; font-weight: 600; font-size: 11px; text-transform: uppercase;
-  letter-spacing: .8px; color: var(--muted); border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.panel-body { flex: 1; overflow-y: auto; padding: 8px 0; }
-.panel-body::-webkit-scrollbar { width: 4px; }
-.panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+/* 工具/视图按钮 active 状态 */
+.tool-btn.active{background:rgba(31,111,235,.25);border-color:var(--accent);color:var(--accent2)}
+.view-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
 
-/* ── Left sidebar ───────────────────────────────────────────── */
-.section-hdr {
-  padding: 6px 12px 4px; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
-  display: flex; align-items: center; justify-content: space-between;
-}
-.section-hdr .add-btn {
-  background: none; border: none; color: var(--accent2); cursor: pointer;
-  font-size: 16px; line-height: 1; padding: 0 2px;
-}
-.section-hdr .add-btn:hover { color: #fff; }
-.project-row {
-  display: flex; align-items: center; padding: 5px 10px 5px 12px;
-  cursor: pointer; gap: 6px; transition: background .1s; border-radius: 4px;
-  margin: 0 4px;
-}
-.project-row:hover { background: var(--btn-h); }
-.project-row.active { background: rgba(31,111,235,.2); color: var(--accent2); }
-.project-row .arrow { color: var(--muted); font-size: 10px; }
-.project-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-row .del { background: none; border: none; color: var(--muted);
-                    cursor: pointer; font-size: 14px; padding: 0 2px; }
-.project-row .del:hover { color: var(--danger); }
-.scenario-row {
-  display: flex; align-items: center; padding: 4px 10px 4px 28px;
-  cursor: pointer; gap: 6px; color: var(--muted); transition: background .1s;
-  border-radius: 4px; margin: 0 4px;
-}
-.scenario-row:hover { background: var(--btn-h); color: var(--text); }
-.scenario-row.active { background: rgba(31,111,235,.15); color: var(--accent2); }
-.scenario-row .badge {
-  font-size: 9px; padding: 1px 4px; border-radius: 3px; background: var(--accent);
-  color: #fff; font-weight: 600; text-transform: uppercase;
-}
-.divider { height: 1px; background: var(--border); margin: 8px 0; }
-.obj-row {
-  display: flex; align-items: center; padding: 4px 10px 4px 16px;
-  gap: 6px; transition: background .1s; border-radius: 4px; margin: 0 4px;
-}
-.obj-row:hover { background: var(--btn-h); }
-.obj-row .type-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-}
-.obj-row .obj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.obj-row .obj-type { font-size: 10px; color: var(--muted); }
-.obj-row .del { background: none; border: none; color: var(--muted);
-               cursor: pointer; font-size: 13px; padding: 0 2px; }
-.obj-row .del:hover { color: var(--danger); }
-.dot-ps  { background: #58a6ff; }
-.dot-road { background: #3fb950; }
-.dot-bar { background: #f0883e; }
-.dot-other { background: var(--muted); }
-.empty-state { text-align: center; color: var(--muted); padding: 20px 12px;
-               font-size: 12px; line-height: 1.6; }
+/* 命令按钮（比普通工具按钮小） */
+.cmd-btn{padding:4px 7px;font-size:11px}
 
-/* ── Map area ───────────────────────────────────────────────── */
-#map-area { display: flex; flex-direction: column; background: #0a0e14;
-            overflow: hidden; position: relative; }
-#map-container { flex: 1; position: relative; overflow: hidden; }
-#map-canvas { display: block; }
-#map-overlay {
-  position: absolute; inset: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 8px; pointer-events: none;
-}
-#map-overlay.hidden { display: none; }
-#map-overlay p { color: var(--muted); }
-#map-overlay p:first-child { font-size: 15px; color: #444; }
-#legend-bar {
-  height: 36px; flex-shrink: 0; background: var(--panel);
-  border-top: 1px solid var(--border); padding: 4px 12px;
-  display: flex; align-items: center; gap: 8px;
-}
-#legend-canvas { height: 16px; flex: 1; border-radius: 3px; }
-.legend-labels { display: flex; justify-content: space-between; width: 100%;
-                 font-size: 10px; color: var(--muted); }
+/* 下拉菜单 */
+.drop{position:relative}
+.drop-menu{display:none;position:absolute;top:calc(100% + 4px);left:0;
+  background:var(--panel);border:1px solid var(--border);border-radius:6px;
+  min-width:150px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.drop:hover .drop-menu{display:block}
+.drop-menu a{display:block;padding:7px 14px;color:var(--text);cursor:pointer;
+  text-decoration:none;font-size:12px}
+.drop-menu a:hover{background:var(--btn-h)}
 
-/* ── Right panel ─────────────────────────────────────────────── */
-#right-panel { overflow-y: auto; padding: 12px; display: flex;
-               flex-direction: column; gap: 14px; }
-#right-panel::-webkit-scrollbar { width: 4px; }
-#right-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+/* ── Main 三栏 ── */
+#main{flex:1;display:grid;grid-template-columns:260px 1fr 280px;overflow:hidden;min-height:0}
 
-.card {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-  padding: 12px;
-}
-.card-title {
-  font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .7px; color: var(--muted); margin-bottom: 10px;
-}
-.form-group { margin-bottom: 8px; }
-.form-group label { display: block; font-size: 11px; color: var(--muted);
-                    margin-bottom: 3px; }
-.form-group input, .form-group select {
-  width: 100%; padding: 5px 8px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 5px; color: var(--text); font-size: 12px; outline: none;
-}
-.form-group input:focus, .form-group select:focus { border-color: var(--accent); }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.btn-full {
-  width: 100%; padding: 7px; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--btn); color: var(--text); cursor: pointer; font-size: 12px;
-  font-weight: 600; transition: background .15s;
-}
-.btn-full:hover { background: var(--btn-h); }
-.btn-full.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn-full.primary:hover { filter: brightness(1.15); }
-.btn-full.success { background: #1a3a1a; border-color: var(--success); color: var(--success); }
-.btn-full.success:hover { background: #234523; }
+/* ── 通用面板 ── */
+.panel{background:var(--panel);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;min-height:0}
+#right-panel-wrap{border-right:none;border-left:1px solid var(--border)}
+.panel-hdr{padding:9px 12px;font-weight:600;font-size:11px;text-transform:uppercase;
+  letter-spacing:.8px;color:var(--muted);border-bottom:1px solid var(--border);flex-shrink:0}
+.panel-body{flex:1;overflow-y:auto;padding:6px 0}
+.panel-body::-webkit-scrollbar{width:4px}
+.panel-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 
-.stat-row { display: flex; justify-content: space-between; align-items: center;
-            padding: 4px 0; border-bottom: 1px solid var(--border); }
-.stat-row:last-child { border-bottom: none; }
-.stat-label { color: var(--muted); font-size: 11px; }
-.stat-value { font-weight: 700; font-size: 13px; }
-.stat-value.high  { color: var(--danger); }
-.stat-value.mid   { color: var(--warn); }
-.stat-value.low   { color: var(--success); }
+/* ── 左侧树/列表 ── */
+.section-hdr{padding:6px 12px 3px;font-size:10px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--muted);display:flex;align-items:center;justify-content:space-between}
+.add-btn{background:none;border:none;color:var(--accent2);cursor:pointer;
+  font-size:16px;line-height:1;padding:0 2px}
+.add-btn:hover{color:#fff}
+.count-badge{background:var(--btn);border-radius:10px;padding:1px 6px;font-size:10px}
 
-/* ── Status bar ─────────────────────────────────────────────── */
-#statusbar {
-  height: 26px; background: var(--panel); border-top: 1px solid var(--border);
-  display: flex; align-items: center; padding: 0 12px; gap: 16px;
-  font-size: 11px; color: var(--muted); flex-shrink: 0;
-}
-#statusbar .status-msg { flex: 1; }
-#statusbar .status-chip {
-  padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 600;
-}
-.chip-ready { background: #1a3a1a; color: var(--success); }
-.chip-run   { background: #1a2a3a; color: var(--accent2); }
-.chip-err   { background: #3a1a1a; color: var(--danger); }
+.proj-row{display:flex;align-items:center;padding:5px 10px 5px 12px;
+  cursor:pointer;gap:6px;border-radius:4px;margin:0 4px;transition:background .1s}
+.proj-row:hover{background:var(--btn-h)}
+.proj-row.active{background:rgba(31,111,235,.2);color:var(--accent2)}
+.proj-row .arrow{color:var(--muted);font-size:10px;width:10px}
+.proj-row .pname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj-row .del{background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:13px;opacity:0;transition:opacity .1s}
+.proj-row:hover .del{opacity:1}
+.proj-row .del:hover{color:var(--danger)}
+
+.scen-row{display:flex;align-items:center;padding:4px 10px 4px 28px;
+  cursor:pointer;gap:6px;color:var(--muted);border-radius:4px;margin:0 4px;transition:background .1s}
+.scen-row:hover{background:var(--btn-h);color:var(--text)}
+.scen-row.active{background:rgba(31,111,235,.15);color:var(--accent2)}
+.badge{font-size:9px;padding:1px 4px;border-radius:3px;background:var(--accent);
+  color:#fff;font-weight:600;text-transform:uppercase}
+
+.divider{height:1px;background:var(--border);margin:8px 0}
+
+/* 对象列表行 */
+.obj-row{display:flex;align-items:center;padding:4px 10px 4px 12px;
+  gap:7px;border-radius:4px;margin:0 4px;cursor:pointer;transition:background .1s}
+.obj-row:hover{background:var(--btn-h)}
+.obj-row.active{background:rgba(31,111,235,.15)}
+.type-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-ps{background:#58a6ff}.dot-road{background:#3fb950}.dot-bar{background:#f0883e}
+.obj-row .oname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.obj-row .odel{background:none;border:none;color:var(--muted);cursor:pointer;
+  opacity:0;font-size:13px}
+.obj-row:hover .odel{opacity:1}
+.obj-row .odel:hover{color:var(--danger)}
+
+.empty-state{text-align:center;color:var(--muted);padding:16px 12px;font-size:12px;line-height:1.6}
+
+/* ── 中央 Canvas 区域 ── */
+#map-area{display:flex;flex-direction:column;background:#0a0e14;overflow:hidden;position:relative}
+#map-container{flex:1;position:relative;overflow:hidden;cursor:crosshair}
+#canvas-2d,#canvas-3d{position:absolute;top:0;left:0;width:100%;height:100%}
+.map-overlay{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:8px;pointer-events:none}
+.map-overlay.hidden{display:none}
+.overlay-icon{font-size:40px;opacity:.2}
+.map-overlay p{color:var(--muted);font-size:13px}
+.map-overlay p:last-child strong{color:var(--accent2)}
+
+#legend-bar{height:34px;flex-shrink:0;background:var(--panel);border-top:1px solid var(--border);
+  padding:4px 12px;display:flex;align-items:center;gap:8px}
+.legend-label{font-size:10px;color:var(--muted);white-space:nowrap}
+#legend-canvas{height:14px;flex:1;border-radius:3px}
+#legend-ticks{display:flex;justify-content:space-between;min-width:200px;
+  font-size:10px;color:var(--muted)}
+
+/* ── 右侧面板内容 ── */
+#right-panel{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+#right-panel::-webkit-scrollbar{width:4px}
+#right-panel::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+.card{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:11px}
+.card-title{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.7px;color:var(--muted);margin-bottom:9px}
+.form-group{margin-bottom:7px}
+.form-group label{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
+.form-group input,.form-group select{width:100%;padding:5px 7px;
+  background:var(--panel);border:1px solid var(--border);border-radius:5px;
+  color:var(--text);font-size:12px;outline:none}
+.form-group input:focus,.form-group select:focus{border-color:var(--accent)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.btn-full{width:100%;padding:6px;border-radius:5px;border:1px solid var(--border);
+  background:var(--btn);color:var(--text);cursor:pointer;font-size:12px;
+  font-weight:600;transition:background .12s;margin-top:4px}
+.btn-full:hover{background:var(--btn-h)}
+.btn-full.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-full.primary:hover{filter:brightness(1.12)}
+.note{font-size:11px;color:var(--muted);text-align:center;padding:4px 0}
+
+.stat-row{display:flex;justify-content:space-between;align-items:center;
+  padding:3px 0;border-bottom:1px solid var(--border)}
+.stat-row:last-child{border-bottom:none}
+.stat-label{color:var(--muted);font-size:11px}
+.stat-val{font-weight:700;font-size:13px}
+.stat-val.high{color:var(--danger)}.stat-val.mid{color:var(--warn)}.stat-val.low{color:var(--success)}
+
+/* ── Status Bar ── */
+#statusbar{height:24px;background:var(--panel);border-top:1px solid var(--border);
+  display:flex;align-items:center;padding:0 12px;gap:10px;font-size:11px;
+  color:var(--muted);flex-shrink:0}
+.sep-v{color:var(--border)}
+.flex1{flex:1}
+.mono{font-family:monospace;min-width:150px}
+.muted{color:var(--muted)}
+.status-chip{padding:1px 6px;border-radius:10px;font-size:10px;font-weight:700}
+.chip-ready{background:#1a3a1a;color:var(--success)}
+.chip-run{background:#1a2a3a;color:var(--accent2)}
+.chip-err{background:#3a1a1a;color:var(--danger)}
 </style>
 </head>
 <body>
 
-<!-- ── Toolbar ── -->
+<!-- ══ TOOLBAR ══════════════════════════════════════════════════════════ -->
 <div id="toolbar">
-  <div class="logo">🔊 Noise<span>Desktop</span></div>
+  <div class="logo">🔊 Noise<span>CAD</span></div>
   <div class="sep"></div>
-  <button class="tbtn primary" onclick="newProject()" title="Create a new project (Ctrl+N)">+ New Project</button>
-  <button class="tbtn" onclick="runCalculation()" id="run-btn" title="Run noise calculation (Ctrl+R)">▶ Run Calculation</button>
-  <div class="sep"></div>
+
+  <!-- 文件操作 -->
+  <button class="tbtn primary" id="btn-new-project" title="新建项目 (Ctrl+N)">+ 项目</button>
+  <button class="tbtn" id="btn-fit" title="适应视图 (F)">⊡ 适应</button>
   <div class="drop">
-    <button class="tbtn">⬇ Export ▾</button>
+    <button class="tbtn">⬇ 导出 ▾</button>
     <div class="drop-menu">
-      <a onclick="exportResult('geojson')">GeoJSON (Isolines)</a>
-      <a onclick="exportResult('asc')">ESRI ASCII Grid</a>
-      <a onclick="exportResult('csv')">CSV (x,y,level)</a>
+      <a data-export="geojson">GeoJSON 等值线</a>
+      <a data-export="asc">ESRI ASCII Grid</a>
+      <a data-export="csv">CSV (x,y,level)</a>
     </div>
   </div>
+
+  <div class="sep"></div>
+
+  <!-- 绘制工具组 -->
+  <span class="tool-group-label">绘制</span>
+  <button class="tbtn tool-btn active" data-tool="select" title="选择 (S)">↖ 选</button>
+  <button class="tbtn tool-btn" data-tool="point"  title="点声源 (P)">● 点</button>
+  <button class="tbtn tool-btn" data-tool="road"   title="道路 (R)">━ 路</button>
+  <button class="tbtn tool-btn" data-tool="barrier" title="噪声墙 (B)">┃ 墙</button>
+  <button class="tbtn tool-btn" data-tool="pan"    title="平移 (H)">✋ 移</button>
+
+  <div class="sep"></div>
+
+  <!-- 变换命令组 -->
+  <span class="tool-group-label">变换</span>
+  <button class="tbtn tool-btn cmd-btn" data-tool="move"   title="平移 (M)">⊕M</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="rotate" title="旋转 (RO)">↻RO</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="scale"  title="缩放 (SC)">⊞SC</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="mirror" title="镜像 (MI)">⬡MI</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="copy"   title="复制 (CO)">⿻CO</button>
+
+  <div class="sep"></div>
+
+  <!-- 折线编辑组 -->
+  <span class="tool-group-label">折线</span>
+  <button class="tbtn tool-btn cmd-btn" data-tool="trim"   title="修剪 (TR)">✂TR</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="break"  title="打断 (BR)">⊗BR</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="join"   title="合并 (J)">⊕J</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="offset" title="偏移 (O)">↔O</button>
+  <button class="tbtn tool-btn cmd-btn" data-tool="extend" title="延伸 (EX)">→|EX</button>
+
   <div class="spacer"></div>
-  <span class="info" id="toolbar-info">No project selected</span>
+
+  <!-- 计算 -->
+  <button class="tbtn primary" id="btn-run" title="运行计算 (Ctrl+R)">▶ 计算</button>
+
+  <div class="sep"></div>
+
+  <!-- 视图切换 -->
+  <button class="tbtn view-btn active" data-view="2d">2D</button>
+  <button class="tbtn view-btn" data-view="3d">3D</button>
 </div>
 
-<!-- ── Main ── -->
+<!-- ══ MAIN ═════════════════════════════════════════════════════════════ -->
 <div id="main">
 
-  <!-- Left sidebar -->
+  <!-- 左侧面板：项目树 + 对象列表 -->
   <div class="panel" id="left-panel">
-    <div class="panel-hdr">Explorer</div>
+    <div class="panel-hdr">资源管理器</div>
     <div class="panel-body">
+
       <div class="section-hdr">
-        Projects
-        <button class="add-btn" onclick="newProject()" title="New project">+</button>
+        项目
+        <button class="add-btn" id="btn-new-proj2" title="新建项目">+</button>
       </div>
       <div id="project-tree">
-        <div class="empty-state">No projects yet.<br>Click + to create one.</div>
+        <div class="empty-state">暂无项目<br>点击 + 新建</div>
       </div>
+
       <div class="divider"></div>
+
       <div class="section-hdr">
-        Objects in Scene
-        <span id="obj-count" style="font-size:10px;color:var(--muted)">0</span>
+        场景对象
+        <span id="obj-count" class="count-badge">0</span>
       </div>
       <div id="object-list">
-        <div class="empty-state" id="obj-empty">Select a scenario<br>to see its objects.</div>
+        <div class="empty-state" id="obj-empty">请先选择场景</div>
       </div>
+
     </div>
   </div>
 
-  <!-- Map area -->
+  <!-- 中央：Canvas 区域（2D / 3D 叠放） -->
   <div id="map-area">
     <div id="map-container">
-      <canvas id="map-canvas"></canvas>
-      <div id="map-overlay">
-        <p>🗺 No Calculation Results</p>
-        <p>Add noise sources, then click<br><strong>▶ Run Calculation</strong></p>
+      <canvas id="canvas-2d"></canvas>
+      <canvas id="canvas-3d" style="display:none"></canvas>
+      <div id="map-overlay" class="map-overlay">
+        <p class="overlay-icon">🗺</p>
+        <p>无计算结果</p>
+        <p>添加声源后点击 <strong>▶ 计算</strong></p>
       </div>
     </div>
+    <!-- 色阶图例 -->
     <div id="legend-bar">
-      <span style="font-size:10px;color:var(--muted);white-space:nowrap">dB(A)</span>
+      <span class="legend-label">dB(A)</span>
       <canvas id="legend-canvas"></canvas>
-      <div style="position:relative;flex:1">
-        <div class="legend-labels" id="legend-labels">
-          <span>35</span><span>40</span><span>45</span><span>50</span>
-          <span>55</span><span>60</span><span>65</span><span>70</span><span>75+</span>
-        </div>
+      <div id="legend-ticks">
+        <span>35</span><span>40</span><span>45</span><span>50</span>
+        <span>55</span><span>60</span><span>65</span><span>70</span><span>75+</span>
       </div>
     </div>
   </div>
 
-  <!-- Right panel -->
-  <div class="panel" style="border-right:none;border-left:1px solid var(--border)">
-    <div class="panel-hdr">Properties</div>
+  <!-- 右侧面板：属性 / 命令输入 -->
+  <div class="panel" id="right-panel-wrap">
+    <div class="panel-hdr">属性</div>
     <div id="right-panel">
 
-      <!-- Add object card -->
-      <div class="card">
-        <div class="card-title">Add Object</div>
+      <!-- 添加对象卡片 -->
+      <div class="card" id="card-add-obj">
+        <div class="card-title">添加对象</div>
         <div class="form-group">
-          <label>Type</label>
-          <select id="obj-type">
-            <option value="point">Point Source</option>
+          <label>类型</label>
+          <select id="add-type">
+            <option value="point">点声源</option>
+            <option value="road">道路声源</option>
+            <option value="barrier">噪声墙</option>
           </select>
         </div>
         <div class="form-group">
-          <label>Name</label>
-          <input id="obj-name" placeholder="e.g. Factory A" type="text">
+          <label>名称</label>
+          <input id="add-name" type="text" placeholder="如：工厂 A">
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>X (m)</label>
-            <input id="obj-x" type="number" value="100" step="1">
+        <!-- 点声源专属 -->
+        <div id="add-point-fields">
+          <div class="form-row">
+            <div class="form-group"><label>X (m)</label><input id="add-x" type="number" value="100"></div>
+            <div class="form-group"><label>Y (m)</label><input id="add-y" type="number" value="100"></div>
           </div>
-          <div class="form-group">
-            <label>Y (m)</label>
-            <input id="obj-y" type="number" value="100" step="1">
+          <div class="form-row">
+            <div class="form-group"><label>Z (m)</label><input id="add-z" type="number" value="1.5" step="0.5"></div>
+            <div class="form-group"><label>Lw (dB)</label><input id="add-lw" type="number" value="80" min="0" max="140"></div>
           </div>
+          <button class="btn-full" id="btn-add-point">+ 添加到场景</button>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Height Z (m)</label>
-            <input id="obj-z" type="number" value="1.5" step="0.5">
+        <!-- 道路专属 -->
+        <div id="add-road-fields" style="display:none">
+          <div class="form-row">
+            <div class="form-group"><label>声源高 (m)</label><input id="add-sh" type="number" value="0.05" step="0.05"></div>
+            <div class="form-group"><label>采样间距 (m)</label><input id="add-ss" type="number" value="5" min="1"></div>
           </div>
+          <button class="btn-full primary" id="btn-draw-road">✏ 进入绘制模式</button>
+        </div>
+        <!-- 噪声墙专属 -->
+        <div id="add-barrier-fields" style="display:none">
           <div class="form-group">
-            <label>Lw (dB)</label>
-            <input id="obj-lw" type="number" value="80" step="1" min="0" max="140">
+            <label>墙高 (m)</label>
+            <input id="add-height" type="number" value="3.0" step="0.5" min="0.5">
           </div>
+          <button class="btn-full primary" id="btn-draw-barrier">✏ 进入绘制模式</button>
         </div>
-        <button class="btn-full" onclick="addObject()" id="add-obj-btn">+ Add to Scene</button>
-        <div id="add-note" style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;">
-          Select a scenario first
-        </div>
+        <div id="add-note" class="note">请先选择场景</div>
       </div>
 
-      <!-- Calculation card -->
-      <div class="card">
-        <div class="card-title">Calculation Settings</div>
+      <!-- 命令输入卡片（动态，Phase 20D-E 填充） -->
+      <div class="card" id="card-cmd" style="display:none">
+        <div class="card-title" id="cmd-title">命令</div>
+        <div id="cmd-body"></div>
+      </div>
+
+      <!-- 选中对象属性卡片 -->
+      <div class="card" id="card-selection" style="display:none">
+        <div class="card-title">选中对象</div>
+        <div id="selection-body"></div>
+      </div>
+
+      <!-- 计算设置卡片 -->
+      <div class="card" id="card-calc">
+        <div class="card-title">计算设置</div>
         <div class="form-group">
-          <label>Noise Metric</label>
+          <label>噪声指标</label>
           <select id="calc-metric">
-            <option value="Lden">Lden (EU Day-Evening-Night)</option>
-            <option value="Ldn">Ldn (FHWA Day-Night)</option>
-            <option value="Leq">Leq (Equivalent)</option>
+            <option value="Lden">Lden（EU 昼晚夜）</option>
+            <option value="Ldn">Ldn（FHWA 昼夜）</option>
+            <option value="Leq">Leq（等效）</option>
           </select>
         </div>
         <div class="form-row">
-          <div class="form-group">
-            <label>Resolution (m)</label>
-            <input id="calc-resolution" type="number" value="10" step="5" min="1" max="100">
-          </div>
-          <div class="form-group">
-            <label>Grid size (m)</label>
-            <input id="calc-extent" type="number" value="500" step="100" min="100">
-          </div>
+          <div class="form-group"><label>分辨率 (m)</label><input id="calc-res" type="number" value="10" min="1" max="100" step="5"></div>
+          <div class="form-group"><label>范围 (m)</label><input id="calc-extent" type="number" value="500" min="100" step="100"></div>
         </div>
-        <button class="btn-full primary" onclick="runCalculation()" id="run-btn2">▶ Run Calculation</button>
+        <button class="btn-full primary" id="btn-run2">▶ 运行计算</button>
       </div>
 
-      <!-- Results card -->
-      <div class="card" id="results-card">
-        <div class="card-title">Results</div>
-        <div id="no-results" style="color:var(--muted);font-size:12px;text-align:center;padding:8px 0">
-          No results yet
-        </div>
-        <div id="result-stats" style="display:none">
-          <div class="stat-row">
-            <span class="stat-label">Metric</span>
-            <span class="stat-value" id="result-metric">—</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Maximum</span>
-            <span class="stat-value high" id="result-max">—</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Mean</span>
-            <span class="stat-value mid" id="result-mean">—</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Minimum</span>
-            <span class="stat-value low" id="result-min">—</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Grid</span>
-            <span class="stat-value" id="result-grid">—</span>
-          </div>
+      <!-- 计算结果卡片 -->
+      <div class="card" id="card-results">
+        <div class="card-title">计算结果</div>
+        <div id="results-body">
+          <div class="note">暂无结果</div>
         </div>
       </div>
 
     </div>
   </div>
 
+</div><!-- #main -->
+
+<!-- ══ STATUS BAR ════════════════════════════════════════════════════════ -->
+<div id="statusbar">
+  <span id="status-coords" class="mono">X: 0.0  Y: 0.0</span>
+  <span class="sep-v">|</span>
+  <span id="status-tool">选择</span>
+  <span class="sep-v">|</span>
+  <span id="status-hint" class="flex1 muted">就绪</span>
+  <span class="status-chip chip-ready" id="status-chip">READY</span>
+  <span class="sep-v">|</span>
+  <span id="status-scenario" class="muted">未选场景</span>
 </div>
 
-<!-- ── Status bar ── -->
-<div id="statusbar">
-  <span class="status-msg" id="status-bar">Ready</span>
-  <span class="status-chip chip-ready" id="status-chip">READY</span>
-  <span>|</span>
-  <span id="status-scenario" style="color:var(--muted)">No scenario selected</span>
-</div>
+<!-- Three.js CDN (Phase 20F) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"
+        onerror="window._threeLoadFailed=true"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"
+        onerror="window._threeLoadFailed=true"></script>
 
 <script>
-// ── Tauri bridge ──────────────────────────────────────────────────────────────
+// ── Tauri bridge ────────────────────────────────────────────────────────
 const invoke = window.__TAURI__?.core?.invoke
-    ?? (async (cmd, args) => { throw new Error('Not running in Tauri: ' + cmd); });
-const saveDialog = window.__TAURI__?.dialog?.save
-    ?? (async () => prompt('Enter file path to save:'));
+  ?? (async (cmd, args) => { console.warn('invoke stub:', cmd, args); throw new Error('Not in Tauri: ' + cmd); });
+const saveDialog = window.__TAURI__?.dialog?.save ?? (async () => prompt('保存路径：'));
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let projects = [];
-let currentProjectId = null;
-let currentScenarioId = null;
-let currentScenarioName = null;
-let currentCalcResult = null;
-let objects = [];
+// ── 颜色工具 ────────────────────────────────────────────────────────────
+const COLOR_STOPS = [
+  [0.0,  [0,   0,   200]],
+  [0.2,  [0,   200, 220]],
+  [0.4,  [0,   200, 0  ]],
+  [0.6,  [255, 230, 0  ]],
+  [0.8,  [255, 100, 0  ]],
+  [1.0,  [255, 0,   0  ]],
+];
+function dbToRGB(t) {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
+    const [t0, c0] = COLOR_STOPS[i], [t1, c1] = COLOR_STOPS[i + 1];
+    if (t <= t1) {
+      const f = (t - t0) / (t1 - t0);
+      return c0.map((v, j) => Math.round(v + f * (c1[j] - v)));
+    }
+  }
+  return COLOR_STOPS[COLOR_STOPS.length - 1][1];
+}
+function dbToCSS(t) { const [r,g,b] = dbToRGB(t); return `rgb(${r},${g},${b})`; }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-    resizeCanvas();
-    drawLegend();
-    drawEmptyMap();
-    window.addEventListener('resize', () => { resizeCanvas(); if (currentCalcResult) renderNoiseMap(currentCalcResult); else drawEmptyMap(); });
-    loadProjects();
+// ── 全局状态 ─────────────────────────────────────────────────────────────
+const APP = {
+  projects: [],
+  currentProjectId: null,
+  currentScenarioId: null,
+  currentScenarioName: null,
+  objects: [],
+  calcResult: null,
+  activeView: '2d',
+  selectedIds: new Set(),
+  tool: {
+    mode: 'select',
+    phase: 0,
+    draftVerts: [],
+    draftMouse: null,
+    basePoint: null,
+    cmdParams: {},
+    previewObjs: [],
+    joinFirst: null,
+  },
+  drag: {
+    active: false, type: null,
+    rowId: null, vertexIndex: null,
+    startCanvas: null, startWorld: null,
+    origPosition: null, origVertices: null,
+  },
+};
+
+// ── Viewport2D ───────────────────────────────────────────────────────────
+class Viewport2D {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx    = canvas.getContext('2d');
+    this.originX = 250;
+    this.originY = 250;
+    this.scale   = 0.8;   // pixels/metre
+    this._dirty  = false;
+    this._dpr    = window.devicePixelRatio || 1;
+    this.W = 0; this.H = 0;
+  }
+
+  resize() {
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    this.W = rect.width;
+    this.H = rect.height;
+    this.canvas.width  = this.W * this._dpr;
+    this.canvas.height = this.H * this._dpr;
+    this.canvas.style.width  = this.W + 'px';
+    this.canvas.style.height = this.H + 'px';
+    this.ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
+    this.requestRedraw();
+  }
+
+  worldToCanvas(wx, wy) {
+    return {
+      x: this.W / 2 + (wx - this.originX) * this.scale,
+      y: this.H / 2 - (wy - this.originY) * this.scale,
+    };
+  }
+
+  canvasToWorld(cx, cy) {
+    return {
+      x: this.originX + (cx - this.W / 2) / this.scale,
+      y: this.originY - (cy - this.H / 2) / this.scale,
+    };
+  }
+
+  pan(dx, dy) {
+    this.originX -= dx / this.scale;
+    this.originY += dy / this.scale;
+    this.requestRedraw();
+  }
+
+  zoomAt(cx, cy, factor) {
+    const wp = this.canvasToWorld(cx, cy);
+    this.scale = Math.max(0.002, Math.min(2000, this.scale * factor));
+    this.originX = wp.x - (cx - this.W / 2) / this.scale;
+    this.originY = wp.y + (cy - this.H / 2) / this.scale;
+    this.requestRedraw();
+  }
+
+  fitToObjects(objects, calcResult) {
+    const pts = [];
+    for (const o of objects) {
+      if (o.position) pts.push([o.position[0], o.position[1]]);
+      if (o.vertices) o.vertices.forEach(v => pts.push([v[0], v[1]]));
+    }
+    if (calcResult) {
+      const r = calcResult;
+      pts.push([r.xmin, r.ymin]);
+      pts.push([r.xmin + r.nx * r.cellsize, r.ymin + r.ny * r.cellsize]);
+    }
+    if (!pts.length) return;
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const rangeX = (maxX - minX) || 200, rangeY = (maxY - minY) || 200;
+    this.scale   = Math.min(this.W / rangeX, this.H / rangeY) / 1.35;
+    this.originX = (minX + maxX) / 2;
+    this.originY = (minY + maxY) / 2;
+    this.requestRedraw();
+  }
+
+  getGridSpacing() {
+    const target = 80; // ideal pixel spacing
+    let step = Math.pow(10, Math.floor(Math.log10(target / this.scale)));
+    for (const m of [1, 2, 5, 10]) {
+      if (step * m * this.scale >= 40) return step * m;
+    }
+    return step * 10;
+  }
+
+  requestRedraw() {
+    if (this._dirty) return;
+    this._dirty = true;
+    requestAnimationFrame(() => { this._dirty = false; Renderer2D.draw(); });
+  }
+}
+
+// ── Renderer2D ───────────────────────────────────────────────────────────
+const Renderer2D = {
+  vp: null,
+
+  draw() {
+    if (!this.vp || APP.activeView !== '2d') return;
+    const { ctx, W, H } = this.vp;
+    ctx.clearRect(0, 0, W, H);
+    this._drawGrid();
+    // Phase 20B: _drawHeatmap()
+    this._drawObjects();
+    // Phase 20C: _drawDraft()
+    // Phase 20D: _drawPreview()
+    this._drawSelection();
+    this._drawAxisIndicator();
+  },
+
+  _drawGrid() {
+    const { ctx, W, H } = this.vp;
+    const step = this.vp.getGridSpacing();
+
+    const wl = this.vp.canvasToWorld(0, 0).x;
+    const wr = this.vp.canvasToWorld(W, 0).x;
+    const wb = this.vp.canvasToWorld(0, H).y;
+    const wt = this.vp.canvasToWorld(0, 0).y;
+
+    ctx.save();
+    ctx.strokeStyle = '#1c2128';
+    ctx.lineWidth   = 0.5;
+
+    // 垂直格线
+    const x0 = Math.floor(wl / step) * step;
+    for (let wx = x0; wx <= wr + step; wx += step) {
+      const { x } = this.vp.worldToCanvas(wx, 0);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    // 水平格线
+    const y0 = Math.floor(wb / step) * step;
+    for (let wy = y0; wy <= wt + step; wy += step) {
+      const { y } = this.vp.worldToCanvas(0, wy);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // 坐标标签（每 5 格）
+    ctx.fillStyle = '#3d444d';
+    ctx.font = '10px monospace';
+    const lx0 = Math.floor(wl / (step * 5)) * (step * 5);
+    for (let wx = lx0; wx <= wr + step * 5; wx += step * 5) {
+      const { x } = this.vp.worldToCanvas(wx, 0);
+      ctx.textAlign = 'center';
+      ctx.fillText(wx.toFixed(0), x, H - 3);
+    }
+    const ly0 = Math.floor(wb / (step * 5)) * (step * 5);
+    for (let wy = ly0; wy <= wt + step * 5; wy += step * 5) {
+      const { y } = this.vp.worldToCanvas(0, wy);
+      ctx.textAlign = 'left';
+      ctx.fillText(wy.toFixed(0), 3, y - 2);
+    }
+
+    // 原点十字
+    const o = this.vp.worldToCanvas(0, 0);
+    ctx.strokeStyle = '#30363d';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(o.x - 10, o.y); ctx.lineTo(o.x + 10, o.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(o.x, o.y - 10); ctx.lineTo(o.x, o.y + 10); ctx.stroke();
+
+    ctx.restore();
+  },
+
+  _drawAxisIndicator() {
+    const { ctx, H } = this.vp;
+    const ox = 38, oy = H - 38, L = 26;
+    ctx.save();
+    ctx.lineWidth = 2;
+    // X 轴（红）
+    ctx.strokeStyle = '#f85149'; ctx.fillStyle = '#f85149';
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + L, oy); ctx.stroke();
+    ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('X', ox + L + 3, oy + 4);
+    // Y 轴（绿）
+    ctx.strokeStyle = '#3fb950'; ctx.fillStyle = '#3fb950';
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox, oy - L); ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillText('Y', ox, oy - L - 4);
+    // 原点
+    ctx.fillStyle = '#484f58';
+    ctx.beginPath(); ctx.arc(ox, oy, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  },
+
+  _drawObjects() {
+    if (!APP.objects.length) return;
+    const { ctx } = this.vp;
+    ctx.save();
+    APP.objects.forEach(obj => {
+      const sel = APP.selectedIds.has(obj.row_id);
+      if (obj.object_type === 'point_source' && obj.position) {
+        const p = this.vp.worldToCanvas(obj.position[0], obj.position[1]);
+        ctx.strokeStyle = sel ? '#79c0ff' : '#1f6feb';
+        ctx.fillStyle   = sel ? 'rgba(121,192,255,0.25)' : 'rgba(31,111,235,0.18)';
+        ctx.lineWidth   = sel ? 2.5 : 1.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        // Cross
+        ctx.beginPath();
+        ctx.moveTo(p.x - 6, p.y); ctx.lineTo(p.x + 6, p.y);
+        ctx.moveTo(p.x, p.y - 6); ctx.lineTo(p.x, p.y + 6);
+        ctx.stroke();
+      } else if (obj.object_type === 'road_source' && obj.vertices && obj.vertices.length >= 2) {
+        ctx.strokeStyle = sel ? '#7ee787' : '#3fb950';
+        ctx.lineWidth   = sel ? 3.5 : 2;
+        ctx.lineJoin    = 'round';
+        ctx.beginPath();
+        obj.vertices.forEach((v, i) => {
+          const p = this.vp.worldToCanvas(v[0], v[1]);
+          i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+      } else if (obj.object_type === 'barrier' && obj.vertices && obj.vertices.length >= 2) {
+        ctx.strokeStyle = sel ? '#ffa657' : '#d18616';
+        ctx.lineWidth   = sel ? 5 : 3.5;
+        ctx.lineJoin    = 'round';
+        ctx.lineCap     = 'square';
+        ctx.beginPath();
+        obj.vertices.forEach((v, i) => {
+          const p = this.vp.worldToCanvas(v[0], v[1]);
+          i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+  },
+
+  _drawSelection() {
+    if (!APP.selectedIds.size) return;
+    const { ctx } = this.vp;
+    ctx.save();
+    APP.objects.forEach(obj => {
+      if (!APP.selectedIds.has(obj.row_id)) return;
+      const verts = obj.object_type === 'point_source'
+        ? (obj.position ? [obj.position] : [])
+        : (obj.vertices || []);
+      verts.forEach((v, i) => {
+        const p = this.vp.worldToCanvas(v[0], v[1]);
+        const isActive = APP.drag.active
+          && APP.drag.rowId === obj.row_id
+          && APP.drag.vertexIndex === i;
+        ctx.fillStyle   = isActive ? '#58a6ff' : '#e6edf3';
+        ctx.strokeStyle = '#58a6ff';
+        ctx.lineWidth   = 1.5;
+        ctx.beginPath();
+        ctx.rect(p.x - 4, p.y - 4, 8, 8);
+        ctx.fill(); ctx.stroke();
+      });
+    });
+    ctx.restore();
+  },
+};
+
+// ── 事件处理（Phase 20A：pan/zoom/坐标） ────────────────────────────────
+let _spaceDown = false;
+let _panState  = null;   // { sx, sy, ox, oy }
+
+function initCanvasEvents(canvas) {
+  // 滚轮缩放
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.18 : 0.85;
+    vp.zoomAt(e.offsetX, e.offsetY, factor);
+  }, { passive: false });
+
+  // 鼠标按下
+  canvas.addEventListener('mousedown', e => {
+    // Phase 20B 工具逻辑在此扩展
+    const isPan = e.button === 1 || (e.button === 0 && _spaceDown)
+                  || APP.tool.mode === 'pan';
+    if (isPan && e.button !== 2) {
+      _panState = { sx: e.offsetX, sy: e.offsetY, ox: vp.originX, oy: vp.originY };
+      canvas.style.cursor = 'grabbing';
+      e.preventDefault();
+      return;
+    }
+    TC.onMouseDown(e);
+  });
+
+  // 鼠标移动
+  canvas.addEventListener('mousemove', e => {
+    if (_panState) {
+      const dx = e.offsetX - _panState.sx;
+      const dy = e.offsetY - _panState.sy;
+      vp.originX = _panState.ox - dx / vp.scale;
+      vp.originY = _panState.oy + dy / vp.scale;
+      vp.requestRedraw();
+    }
+    TC.onMouseMove(e);
+    // 状态栏坐标
+    const w = vp.canvasToWorld(e.offsetX, e.offsetY);
+    document.getElementById('status-coords').textContent =
+      `X: ${w.x.toFixed(1)}  Y: ${w.y.toFixed(1)}`;
+  });
+
+  // 鼠标抬起
+  canvas.addEventListener('mouseup', e => {
+    if (_panState) {
+      _panState = null;
+      canvas.style.cursor = APP.tool.mode === 'pan' ? 'grab' : 'crosshair';
+      return;
+    }
+    TC.onMouseUp(e);
+  });
+
+  // 双击
+  canvas.addEventListener('dblclick', e => {
+    // Phase 20C: TC.onDblClick(e)
+  });
+}
+
+// 键盘
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { _spaceDown = true; e.preventDefault(); }
+  const map = { s:'select',p:'point',r:'road',b:'barrier',h:'pan',
+                m:'move', f_key:'fit' };
+  const k = e.key.toLowerCase();
+  if (k === 'f') { vp.fitToObjects(APP.objects, APP.calcResult); return; }
+  if (map[k]) { setActiveTool(map[k]); return; }
+  if (k === 'escape') {
+    // Phase 20C: TC._cancelDraft()
+  }
+  if (k === 'delete' || k === 'backspace') {
+    if (!APP.selectedIds.size || !APP.currentScenarioId) return;
+    Promise.all([...APP.selectedIds].map(id =>
+      invoke('remove_object', { scenarioId: APP.currentScenarioId, rowId: id })
+        .catch(err => console.warn('remove_object failed:', err))
+    )).then(() => loadObjects());
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space') _spaceDown = false;
 });
 
-// ── Projects ──────────────────────────────────────────────────────────────────
-async function loadProjects() {
-    try {
-        const res = await invoke('list_projects');
-        projects = Array.isArray(res) ? res : (res.items || []);
-        renderProjectTree();
-    } catch(e) { showStatus('Failed to load projects: ' + e, 'err'); }
+// ── 工具按钮切换 ─────────────────────────────────────────────────────────
+function setActiveTool(mode) {
+  APP.tool.mode = mode;
+  APP.tool.phase = 0;
+  document.querySelectorAll('.tool-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tool === mode);
+  });
+  const names = {
+    select:'选择',point:'放置点声源',road:'绘制道路',barrier:'绘制噪声墙',pan:'平移',
+    move:'平移变换',rotate:'旋转',scale:'缩放',mirror:'镜像',copy:'复制',
+    trim:'修剪',break:'打断',join:'合并',offset:'偏移',extend:'延伸',
+  };
+  document.getElementById('status-tool').textContent = names[mode] || mode;
+  const hints = {
+    select:'点击选中对象，拖拽移动',
+    point:'点击画布放置点声源',
+    road:'单击添加顶点，双击完成，Esc取消',
+    barrier:'单击添加顶点，双击完成，Esc取消',
+    pan:'拖拽平移视图',
+    move:'选中对象后：点击基点→点击目标点',
+    rotate:'选中对象后：点击基点→输入角度',
+    scale:'选中对象后：点击基点→输入比例',
+    mirror:'选中对象后：点击轴线两端点',
+    copy:'选中对象后：点击基点→点击目标点',
+    trim:'点击折线端段修剪',
+    break:'点击折线位置打断',
+    join:'依次点击两条折线合并',
+    offset:'右侧输入距离后点击折线',
+    extend:'点击折线端点→点击延伸目标',
+  };
+  document.getElementById('status-hint').textContent = hints[mode] || '';
+  const canvas2d = document.getElementById('canvas-2d');
+  canvas2d.style.cursor = mode === 'pan' ? 'grab' : 'crosshair';
+  // Phase 20D: UIController.updateCmdPanel()
 }
 
-function renderProjectTree() {
-    const tree = document.getElementById('project-tree');
-    if (projects.length === 0) {
-        tree.innerHTML = '<div class="empty-state">No projects yet.<br>Click + to create one.</div>';
-        return;
+// ── 视图切换（Phase 20F 填充 3D 逻辑） ──────────────────────────────────
+function switchView(v) {
+  APP.activeView = v;
+  document.getElementById('canvas-2d').style.display = v === '2d' ? 'block' : 'none';
+  document.getElementById('canvas-3d').style.display = v === '3d' ? 'block' : 'none';
+  document.querySelectorAll('.view-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === v);
+  });
+  if (v === '2d') {
+    vp.requestRedraw();
+    // Phase 20F: R3D.stop()
+  } else {
+    // Phase 20F: R3D.sync(); R3D.start();
+    if (window._threeLoadFailed) {
+      document.getElementById('canvas-3d').style.background = '#0a0e14';
     }
-    tree.innerHTML = projects.map(p => `
-      <div>
-        <div class="project-row ${p.id === currentProjectId ? 'active' : ''}"
-             onclick="toggleProject('${p.id}')">
-          <span class="arrow" id="arr-${p.id}">▶</span>
-          <span class="name">${esc(p.name)}</span>
-          <button class="del" onclick="event.stopPropagation();deleteProject('${p.id}')" title="Delete project">🗑</button>
-        </div>
-        <div id="subtree-${p.id}" style="display:none"></div>
-      </div>
-    `).join('');
-    if (currentProjectId) toggleProject(currentProjectId, true);
+  }
 }
 
-async function toggleProject(pid, expand) {
-    const sub = document.getElementById('subtree-' + pid);
-    const arr = document.getElementById('arr-' + pid);
-    if (!sub) return;
-    const isOpen = sub.style.display !== 'none';
-    if (isOpen && !expand) {
-        sub.style.display = 'none';
-        arr.textContent = '▶';
-        return;
-    }
-    arr.textContent = '▼';
-    sub.style.display = 'block';
-    currentProjectId = pid;
-    renderProjectTree();
-    try {
-        const detail = await invoke('get_project', { projectId: pid });
-        sub.innerHTML = `
-          <div class="scenario-row ${detail.base_scenario.id === currentScenarioId ? 'active' : ''}"
-               onclick="selectScenario('${detail.base_scenario.id}','${esc(detail.base_scenario.name)}')">
-            <span class="badge">base</span>
-            <span>${esc(detail.base_scenario.name)}</span>
-          </div>
-          ${(detail.variants || []).map(v => `
-            <div class="scenario-row ${v.id === currentScenarioId ? 'active' : ''}"
-                 onclick="selectScenario('${v.id}','${esc(v.name)}')">
-              <span>↳</span><span>${esc(v.name)}</span>
-            </div>
-          `).join('')}
-        `;
-    } catch(e) { sub.innerHTML = `<div class="empty-state">${e}</div>`; }
-}
-
-async function newProject() {
-    const name = prompt('Project name:');
-    if (!name?.trim()) return;
-    try {
-        await invoke('new_project', { name: name.trim(), crsEpsg: 32650 });
-        showStatus('Created project: ' + name);
-        await loadProjects();
-    } catch(e) { showStatus('Error: ' + e, 'err'); }
-}
-
-async function deleteProject(pid) {
-    if (!confirm('Delete this project and all its data?')) return;
-    try {
-        await invoke('delete_project', { projectId: pid });
-        if (currentProjectId === pid) { currentProjectId = null; currentScenarioId = null; clearObjects(); }
-        showStatus('Project deleted');
-        await loadProjects();
-    } catch(e) { showStatus('Error: ' + e, 'err'); }
-}
-
-// ── Scenarios ─────────────────────────────────────────────────────────────────
-async function selectScenario(sid, name) {
-    currentScenarioId = sid;
-    currentScenarioName = name;
-    document.getElementById('status-scenario').textContent = name;
-    document.getElementById('add-note').textContent = 'Scenario: ' + name;
-    document.getElementById('toolbar-info').textContent = name;
-    renderProjectTree();
-    await loadObjects();
-    showStatus('Selected: ' + name);
-}
-
-// ── Objects ───────────────────────────────────────────────────────────────────
-async function loadObjects() {
-    if (!currentScenarioId) return;
-    try {
-        objects = await invoke('list_objects', { scenarioId: currentScenarioId });
-        renderObjectList();
-    } catch(e) { showStatus('Error loading objects: ' + e, 'err'); }
-}
-
-function renderObjectList() {
-    const list = document.getElementById('object-list');
-    const empty = document.getElementById('obj-empty');
-    document.getElementById('obj-count').textContent = objects.length;
-    if (objects.length === 0) {
-        list.innerHTML = '<div class="empty-state">No objects in this scenario.<br>Add sources using the panel →</div>';
-        return;
-    }
-    list.innerHTML = objects.map(o => {
-        const dot = dotClass(o.object_type);
-        const typeShort = o.object_type.replace('ObjectType::', '').replace('PointSource', 'PS').replace('RoadSource', 'Road').replace('Barrier', 'Bar').replace('Building', 'Bldg');
-        return `
-          <div class="obj-row">
-            <div class="type-dot ${dot}"></div>
-            <span class="obj-name">${esc(o.name)}</span>
-            <span class="obj-type">${typeShort}</span>
-            <button class="del" onclick="deleteObject(${o.row_id})" title="Remove">✕</button>
-          </div>
-        `;
-    }).join('');
-}
-
-function clearObjects() {
-    objects = [];
-    document.getElementById('object-list').innerHTML = '<div class="empty-state" id="obj-empty">Select a scenario<br>to see its objects.</div>';
-    document.getElementById('obj-count').textContent = '0';
-}
-
-function dotClass(type) {
-    if (type.includes('PointSource')) return 'dot-ps';
-    if (type.includes('Road')) return 'dot-road';
-    if (type.includes('Barrier')) return 'dot-bar';
-    return 'dot-other';
-}
-
-async function addObject() {
-    if (!currentScenarioId) { showStatus('Select a scenario first', 'err'); return; }
-    const name = document.getElementById('obj-name').value.trim() || 'Source';
-    const x = parseFloat(document.getElementById('obj-x').value) || 100;
-    const y = parseFloat(document.getElementById('obj-y').value) || 100;
-    const z = parseFloat(document.getElementById('obj-z').value) || 1.5;
-    const lw = parseFloat(document.getElementById('obj-lw').value) || 80;
-    try {
-        await invoke('add_point_source', { scenarioId: currentScenarioId, name, x, y, z, lwDb: lw });
-        await loadObjects();
-        showStatus('Added: ' + name, 'ok');
-        document.getElementById('obj-name').value = '';
-    } catch(e) { showStatus('Error: ' + e, 'err'); }
-}
-
-async function deleteObject(rowId) {
-    try {
-        await invoke('delete_object', { rowId });
-        await loadObjects();
-        showStatus('Object removed');
-    } catch(e) { showStatus('Error: ' + e, 'err'); }
-}
-
-// ── Calculation ───────────────────────────────────────────────────────────────
-async function runCalculation() {
-    if (!currentScenarioId) { showStatus('Select a scenario first', 'err'); return; }
-    const metric = document.getElementById('calc-metric').value;
-    const res = parseFloat(document.getElementById('calc-resolution').value) || 10;
-    const ext = parseFloat(document.getElementById('calc-extent').value) || 500;
-
-    document.getElementById('run-btn').textContent = '⏳ Running…';
-    document.getElementById('run-btn2').textContent = '⏳ Running…';
-    setChip('run', 'RUNNING');
-    showStatus('Running ' + metric + ' calculation…');
-
-    try {
-        const result = await invoke('run_calculation', {
-            scenarioId: currentScenarioId,
-            metric,
-            resolutionM: res,
-            xmin: 0, ymin: 0,
-            xmax: ext, ymax: ext,
-        });
-        currentCalcResult = result;
-        renderNoiseMap(result);
-        document.getElementById('result-metric').textContent = result.metric;
-        document.getElementById('result-max').textContent  = result.max_db.toFixed(1) + ' dB';
-        document.getElementById('result-mean').textContent = result.mean_db.toFixed(1) + ' dB';
-        document.getElementById('result-min').textContent  = result.min_db.toFixed(1) + ' dB';
-        document.getElementById('result-grid').textContent = result.nx + '×' + result.ny + ' @ ' + result.cellsize + 'm';
-        document.getElementById('no-results').style.display = 'none';
-        document.getElementById('result-stats').style.display = 'block';
-        document.getElementById('map-overlay').classList.add('hidden');
-        setChip('ready', 'DONE');
-        showStatus('Complete: ' + result.min_db.toFixed(1) + '–' + result.max_db.toFixed(1) + ' dB(A) ' + metric, 'ok');
-    } catch(e) {
-        setChip('err', 'ERROR');
-        showStatus('Calculation failed: ' + e, 'err');
-    } finally {
-        document.getElementById('run-btn').textContent = '▶ Run Calculation';
-        document.getElementById('run-btn2').textContent = '▶ Run Calculation';
-    }
-}
-
-// ── Export ────────────────────────────────────────────────────────────────────
-async function exportResult(format) {
-    if (!currentCalcResult) { showStatus('Run a calculation first', 'err'); return; }
-    const extMap = { geojson: 'geojson', asc: 'asc', csv: 'csv' };
-    const ext = extMap[format] || format;
-    try {
-        const path = await saveDialog({
-            filters: [{ name: format.toUpperCase(), extensions: [ext] }],
-            defaultPath: 'noise_results.' + ext,
-        });
-        if (!path) return;
-        await invoke('export_file', { calcId: currentCalcResult.calc_id, format, filePath: path });
-        showStatus('Exported → ' + path, 'ok');
-    } catch(e) { showStatus('Export error: ' + e, 'err'); }
-}
-
-// ── Noise map rendering ───────────────────────────────────────────────────────
-const COLOR_STOPS = [
-    [0.00, [0,   0,   200]],
-    [0.20, [0,   160, 255]],
-    [0.40, [0,   200, 100]],
-    [0.60, [220, 220, 0  ]],
-    [0.80, [255, 120, 0  ]],
-    [1.00, [255, 0,   0  ]],
-];
-
-function dbToColor(t) {
-    for (let i = 1; i < COLOR_STOPS.length; i++) {
-        if (t <= COLOR_STOPS[i][0]) {
-            const [t0, c0] = COLOR_STOPS[i-1], [t1, c1] = COLOR_STOPS[i];
-            const f = (t - t0) / (t1 - t0);
-            const r = Math.round(c0[0] + f*(c1[0]-c0[0]));
-            const g = Math.round(c0[1] + f*(c1[1]-c0[1]));
-            const b = Math.round(c0[2] + f*(c1[2]-c0[2]));
-            return `rgb(${r},${g},${b})`;
-        }
-    }
-    return 'rgb(255,0,0)';
-}
-
-function renderNoiseMap(result) {
-    const canvas = document.getElementById('map-canvas');
-    const ctx = canvas.getContext('2d');
-    const { nx, ny, levels, min_db, max_db } = result;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#0a0e14';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const cellW = canvas.width / nx;
-    const cellH = canvas.height / ny;
-    const range = (max_db - min_db) || 1;
-
-    for (let row = 0; row < ny; row++) {
-        for (let col = 0; col < nx; col++) {
-            const val = levels[row * nx + col];
-            if (!isFinite(val) || val <= 0) continue;
-            const t = Math.max(0, Math.min(1, (val - min_db) / range));
-            ctx.fillStyle = dbToColor(t);
-            // Y is flipped: row 0 = south (bottom of canvas)
-            ctx.fillRect(col * cellW, (ny - 1 - row) * cellH, cellW + 0.5, cellH + 0.5);
-        }
-    }
-
-    // Draw scale overlay (optional grid lines at major ticks)
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 1;
-    const step = Math.max(1, Math.floor(nx / 10));
-    for (let c = 0; c <= nx; c += step) {
-        ctx.beginPath(); ctx.moveTo(c*cellW, 0); ctx.lineTo(c*cellW, canvas.height); ctx.stroke();
-    }
-    const rstep = Math.max(1, Math.floor(ny / 10));
-    for (let r = 0; r <= ny; r += rstep) {
-        ctx.beginPath(); ctx.moveTo(0, r*cellH); ctx.lineTo(canvas.width, r*cellH); ctx.stroke();
-    }
-}
-
-function drawEmptyMap() {
-    const canvas = document.getElementById('map-canvas');
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#0a0e14';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // Grid pattern
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < canvas.width; x += 40) {
-        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x, canvas.height); ctx.stroke();
-    }
-    for (let y = 0; y < canvas.height; y += 40) {
-        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width, y); ctx.stroke();
-    }
-}
-
+// ── 色阶图例 ─────────────────────────────────────────────────────────────
 function drawLegend() {
-    const lc = document.getElementById('legend-canvas');
-    const ctx = lc.getContext('2d');
-    const w = lc.clientWidth || 300;
-    lc.width = w; lc.height = 16;
-    const grad = ctx.createLinearGradient(0, 0, w, 0);
-    COLOR_STOPS.forEach(([t, [r,g,b]]) => grad.addColorStop(t, `rgb(${r},${g},${b})`));
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, 16);
+  const canvas = document.getElementById('legend-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 200, H = 14;
+  canvas.width = W; canvas.height = H;
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  COLOR_STOPS.forEach(([t, [r,g,b]]) => grad.addColorStop(t, `rgb(${r},${g},${b})`));
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
 }
 
-function resizeCanvas() {
-    const canvas = document.getElementById('map-canvas');
-    const container = document.getElementById('map-container');
-    canvas.width  = container.clientWidth  || 800;
-    canvas.height = container.clientHeight || 600;
-    if (currentCalcResult) renderNoiseMap(currentCalcResult);
-    else drawEmptyMap();
-    drawLegend();
+// ── 状态栏工具函数 ────────────────────────────────────────────────────────
+function showStatus(msg, level = 'ready') {
+  document.getElementById('status-hint').textContent = msg;
+  const chip = document.getElementById('status-chip');
+  chip.className = 'status-chip';
+  chip.classList.add({ ready:'chip-ready', run:'chip-run', err:'chip-err' }[level] || 'chip-ready');
+  chip.textContent = { ready:'READY', run:'RUN', err:'ERROR' }[level] || 'READY';
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function showStatus(msg, type) {
-    document.getElementById('status-bar').textContent = msg;
-    if (type === 'ok')  setChip('ready', 'OK');
-    if (type === 'err') setChip('err', 'ERROR');
+// ── HitTest ──────────────────────────────────────────────────────────────
+const HitTest = {
+  POINT_R:  12,  // px — click radius for point sources
+  EDGE_D:    7,  // px — click distance for polyline edges
+  HANDLE_R:  6,  // px — half-size of vertex handle
+
+  test(cx, cy) {
+    // Vertex handles first (only selected objects)
+    for (const obj of APP.objects) {
+      if (!APP.selectedIds.has(obj.row_id)) continue;
+      const verts = obj.object_type === 'point_source'
+        ? (obj.position ? [obj.position] : [])
+        : (obj.vertices || []);
+      for (let i = 0; i < verts.length; i++) {
+        const p = vp.worldToCanvas(verts[i][0], verts[i][1]);
+        if (Math.abs(p.x - cx) <= this.HANDLE_R && Math.abs(p.y - cy) <= this.HANDLE_R)
+          return { type: 'vertex', obj, vertexIndex: i };
+      }
+    }
+    // Objects (reverse draw order → topmost first)
+    for (let k = APP.objects.length - 1; k >= 0; k--) {
+      const obj = APP.objects[k];
+      if (obj.object_type === 'point_source' && obj.position) {
+        const p = vp.worldToCanvas(obj.position[0], obj.position[1]);
+        if (Math.hypot(p.x - cx, p.y - cy) <= this.POINT_R)
+          return { type: 'object', obj };
+      } else {
+        const verts = obj.vertices || [];
+        for (let i = 0; i < verts.length - 1; i++) {
+          const a = vp.worldToCanvas(verts[i][0],   verts[i][1]);
+          const b = vp.worldToCanvas(verts[i+1][0], verts[i+1][1]);
+          if (this._distSeg(cx, cy, a, b) <= this.EDGE_D)
+            return { type: 'object', obj };
+        }
+      }
+    }
+    return null;
+  },
+
+  _distSeg(px, py, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lenSq = dx*dx + dy*dy;
+    if (lenSq === 0) return Math.hypot(px - a.x, py - a.y);
+    const t = Math.max(0, Math.min(1, ((px-a.x)*dx + (py-a.y)*dy) / lenSq));
+    return Math.hypot(px - (a.x + t*dx), py - (a.y + t*dy));
+  },
+};
+
+// ── ToolController (TC) ──────────────────────────────────────────────────
+const TC = {
+  onMouseDown(e) {
+    if (e.button !== 0) return;
+    const cx = e.offsetX, cy = e.offsetY;
+    const w  = vp.canvasToWorld(cx, cy);
+
+    if (APP.tool.mode === 'select') {
+      const hit = HitTest.test(cx, cy);
+      if (hit && hit.type === 'vertex') {
+        APP.drag.active      = true;
+        APP.drag.type        = 'vertex';
+        APP.drag.rowId       = hit.obj.row_id;
+        APP.drag.vertexIndex = hit.vertexIndex;
+        APP.drag.startWorld  = w;
+        if (hit.obj.object_type === 'point_source') {
+          APP.drag.origPosition = [...hit.obj.position];
+        } else {
+          APP.drag.origVertices = hit.obj.vertices.map(v => [...v]);
+        }
+        e.preventDefault();
+      } else if (hit && hit.type === 'object') {
+        if (!e.ctrlKey) APP.selectedIds = new Set();
+        APP.selectedIds.add(hit.obj.row_id);
+        APP.drag.active     = true;
+        APP.drag.type       = 'object';
+        APP.drag.rowId      = hit.obj.row_id;
+        APP.drag.startWorld = w;
+        if (hit.obj.object_type === 'point_source') {
+          APP.drag.origPosition = [...hit.obj.position];
+        } else {
+          APP.drag.origVertices = hit.obj.vertices.map(v => [...v]);
+        }
+        vp.requestRedraw();
+        e.preventDefault();
+      } else {
+        if (!e.ctrlKey) { APP.selectedIds = new Set(); vp.requestRedraw(); }
+      }
+    }
+  },
+
+  onMouseMove(e) {
+    if (!APP.drag.active) return;
+    const w  = vp.canvasToWorld(e.offsetX, e.offsetY);
+    const dx = w.x - APP.drag.startWorld.x;
+    const dy = w.y - APP.drag.startWorld.y;
+    const obj = APP.objects.find(o => o.row_id === APP.drag.rowId);
+    if (!obj) return;
+
+    if (APP.drag.type === 'vertex') {
+      const vi = APP.drag.vertexIndex;
+      if (obj.object_type === 'point_source') {
+        obj.position = [
+          APP.drag.origPosition[0] + dx,
+          APP.drag.origPosition[1] + dy,
+          APP.drag.origPosition[2] || 0,
+        ];
+      } else {
+        obj.vertices[vi] = [
+          APP.drag.origVertices[vi][0] + dx,
+          APP.drag.origVertices[vi][1] + dy,
+          APP.drag.origVertices[vi][2] || 0,
+        ];
+      }
+    } else {
+      if (obj.object_type === 'point_source') {
+        obj.position = [
+          APP.drag.origPosition[0] + dx,
+          APP.drag.origPosition[1] + dy,
+          APP.drag.origPosition[2] || 0,
+        ];
+      } else {
+        obj.vertices = APP.drag.origVertices.map(v => [v[0]+dx, v[1]+dy, v[2]||0]);
+      }
+    }
+    vp.requestRedraw();
+  },
+
+  async onMouseUp(e) {
+    if (!APP.drag.active) return;
+    APP.drag.active = false;
+    const obj = APP.objects.find(o => o.row_id === APP.drag.rowId);
+    if (obj && APP.currentScenarioId) {
+      try {
+        if (obj.object_type === 'point_source') {
+          await invoke('update_object_geometry', {
+            scenarioId: APP.currentScenarioId,
+            rowId: obj.row_id,
+            position: obj.position,
+            vertices: null,
+          });
+        } else {
+          await invoke('update_object_geometry', {
+            scenarioId: APP.currentScenarioId,
+            rowId: obj.row_id,
+            position: null,
+            vertices: obj.vertices,
+          });
+        }
+      } catch(err) { showStatus('保存失败: ' + err, 'err'); }
+    }
+    APP.drag = {
+      active:false, type:null, rowId:null, vertexIndex:null,
+      startCanvas:null, startWorld:null, origPosition:null, origVertices:null,
+    };
+    vp.requestRedraw();
+  },
+};
+
+// ── 数据加载 ─────────────────────────────────────────────────────────────
+async function loadProjects() { /* Phase 20C */ }
+
+async function loadObjects() {
+  if (!APP.currentScenarioId) { APP.objects = []; vp.requestRedraw(); return; }
+  try {
+    APP.objects = await invoke('list_objects', { scenarioId: APP.currentScenarioId });
+    APP.selectedIds = new Set();
+    vp.fitToObjects(APP.objects, APP.calcResult);
+  } catch(err) {
+    showStatus('加载对象失败: ' + err, 'err');
+  }
 }
 
-function setChip(type, label) {
-    const chip = document.getElementById('status-chip');
-    chip.textContent = label;
-    chip.className = 'status-chip chip-' + type;
-}
+// ── 初始化 ────────────────────────────────────────────────────────────────
+let vp;   // 全局 Viewport2D 实例
 
-function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+document.addEventListener('DOMContentLoaded', () => {
+  const canvas2d = document.getElementById('canvas-2d');
+  vp = new Viewport2D(canvas2d);
+  Renderer2D.vp = vp;
+  vp.resize();
+  initCanvasEvents(canvas2d);
 
-// Keyboard shortcuts
-document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'r') { e.preventDefault(); runCalculation(); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); newProject(); }
+  // 工具按钮
+  document.querySelectorAll('.tool-btn').forEach(b => {
+    b.addEventListener('click', () => setActiveTool(b.dataset.tool));
+  });
+  // 视图按钮
+  document.querySelectorAll('.view-btn').forEach(b => {
+    b.addEventListener('click', () => switchView(b.dataset.view));
+  });
+
+  // 适应视图
+  document.getElementById('btn-fit').addEventListener('click',
+    () => vp.fitToObjects(APP.objects, APP.calcResult));
+
+  // 类型选择切换右侧字段
+  document.getElementById('add-type').addEventListener('change', function() {
+    document.getElementById('add-point-fields').style.display   = this.value==='point'  ?'':'none';
+    document.getElementById('add-road-fields').style.display    = this.value==='road'   ?'':'none';
+    document.getElementById('add-barrier-fields').style.display = this.value==='barrier'?'':'none';
+  });
+
+  // Resize
+  window.addEventListener('resize', () => {
+    vp.resize();
+    // Phase 20F: R3D.resize()
+  });
+
+  drawLegend();
+  setActiveTool('select');
+
+  // Phase 20C: loadProjects()
+  showStatus('Phase 20B 加载完成 — 对象渲染 + 选择 + 顶点拖拽可用', 'ready');
 });
 </script>
 </body>
