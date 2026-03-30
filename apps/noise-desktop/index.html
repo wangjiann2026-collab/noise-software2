@@ -105,6 +105,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .obj-row .odel:hover{color:var(--danger)}
 
 .empty-state{text-align:center;color:var(--muted);padding:16px 12px;font-size:12px;line-height:1.6}
+.proj-item{margin-bottom:2px}
+.proj-name-row{display:flex;align-items:center;gap:4px;padding:3px 6px;cursor:default;
+  border-radius:4px;user-select:none}
+.proj-name-row:hover{background:var(--btn)}
+.proj-icon{font-size:12px;opacity:.7}
+.proj-name-text{flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scenario-row{display:flex;align-items:center;gap:4px;padding:3px 6px 3px 20px;cursor:pointer;
+  border-radius:4px;user-select:none}
+.scenario-row:hover{background:var(--btn)}
+.scenario-row.active{background:rgba(31,111,235,.18);color:var(--accent2)}
+.sc-icon{font-size:11px;opacity:.7}
+.sc-name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.obj-row.selected{background:rgba(31,111,235,.15)}
 
 /* ── 中央 Canvas 区域 ── */
 #map-area{display:flex;flex-direction:column;background:#0a0e14;overflow:hidden;position:relative}
@@ -550,7 +563,7 @@ const Renderer2D = {
     this._drawGrid();
     // Phase 20B: _drawHeatmap()
     this._drawObjects();
-    // Phase 20C: _drawDraft()
+    this._drawDraft();
     // Phase 20D: _drawPreview()
     this._drawSelection();
     this._drawAxisIndicator();
@@ -673,6 +686,51 @@ const Renderer2D = {
     ctx.restore();
   },
 
+  _drawDraft() {
+    const t = APP.tool;
+    if (!['road','barrier','point'].includes(t.mode)) return;
+    if (!t.draftVerts.length && !t.draftMouse) return;
+    const { ctx } = this.vp;
+    ctx.save();
+    const isBarrier = t.mode === 'barrier';
+    ctx.strokeStyle = isBarrier ? '#ffa657' : (t.mode === 'road' ? '#7ee787' : '#79c0ff');
+    ctx.lineWidth   = isBarrier ? 3 : 2;
+    ctx.setLineDash([6, 4]);
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+    if (t.draftVerts.length >= 1) {
+      ctx.beginPath();
+      t.draftVerts.forEach((v, i) => {
+        const p = this.vp.worldToCanvas(v[0], v[1]);
+        i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+      });
+      // Rubber-band to mouse
+      if (t.draftMouse) {
+        const pm = this.vp.worldToCanvas(t.draftMouse[0], t.draftMouse[1]);
+        ctx.lineTo(pm.x, pm.y);
+      }
+      ctx.stroke();
+    }
+    // Vertex dots
+    ctx.setLineDash([]);
+    ctx.fillStyle = ctx.strokeStyle;
+    t.draftVerts.forEach(v => {
+      const p = this.vp.worldToCanvas(v[0], v[1]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+    });
+    // Point preview circle
+    if (t.mode === 'point' && t.draftMouse) {
+      const pm = this.vp.worldToCanvas(t.draftMouse[0], t.draftMouse[1]);
+      ctx.strokeStyle = '#79c0ff'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(pm.x, pm.y, 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(pm.x-6, pm.y); ctx.lineTo(pm.x+6, pm.y);
+      ctx.moveTo(pm.x, pm.y-6); ctx.lineTo(pm.x, pm.y+6);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+
   _drawSelection() {
     if (!APP.selectedIds.size) return;
     const { ctx } = this.vp;
@@ -752,8 +810,12 @@ function initCanvasEvents(canvas) {
   });
 
   // 双击
-  canvas.addEventListener('dblclick', e => {
-    // Phase 20C: TC.onDblClick(e)
+  canvas.addEventListener('dblclick', e => { TC.onDblClick(e); });
+
+  // 鼠标离开画布 — 清除 rubber-band
+  canvas.addEventListener('mouseleave', () => {
+    APP.tool.draftMouse = null;
+    vp.requestRedraw();
   });
 }
 
@@ -767,7 +829,7 @@ document.addEventListener('keydown', e => {
   if (k === 'f') { vp.fitToObjects(APP.objects, APP.calcResult); return; }
   if (map[k]) { setActiveTool(map[k]); return; }
   if (k === 'escape') {
-    // Phase 20C: TC._cancelDraft()
+    TC._cancelDraft();
   }
   if (k === 'delete' || k === 'backspace') {
     if (!APP.selectedIds.size || !APP.currentScenarioId) return;
@@ -907,11 +969,79 @@ const HitTest = {
 
 // ── ToolController (TC) ──────────────────────────────────────────────────
 const TC = {
+  // Draw tools ──────────────────────────────────────────────────────────
+  _startDraw(mode) {
+    APP.tool.mode = mode;
+    APP.tool.phase = 1;
+    APP.tool.draftVerts = [];
+    APP.tool.draftMouse = null;
+  },
+
+  _cancelDraft() {
+    APP.tool.draftVerts = [];
+    APP.tool.draftMouse = null;
+    APP.tool.phase = 0;
+    vp.requestRedraw();
+    showStatus('已取消', 'ready');
+  },
+
+  async _finishPolyline() {
+    const verts = APP.tool.draftVerts;
+    if (verts.length < 2) { this._cancelDraft(); return; }
+    if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
+    const mode = APP.tool.mode;
+    this._cancelDraft();
+    try {
+      const name = mode === 'road'
+        ? `道路声源_${APP.objects.length + 1}`
+        : `噪声墙_${APP.objects.length + 1}`;
+      if (mode === 'road') {
+        const sh = parseFloat(document.getElementById('add-sh').value) || 0.05;
+        await invoke('add_road_source', {
+          scenarioId: APP.currentScenarioId, name,
+          vertices: verts, sourceHeightM: sh,
+        });
+      } else {
+        const h = parseFloat(document.getElementById('add-height').value) || 3.0;
+        await invoke('add_barrier', {
+          scenarioId: APP.currentScenarioId, name,
+          vertices: verts, heightM: h,
+        });
+      }
+      await loadObjects();
+      renderObjectList();
+    } catch(err) { showStatus('添加失败: ' + err, 'err'); }
+  },
+
   onMouseDown(e) {
     if (e.button !== 0) return;
     const cx = e.offsetX, cy = e.offsetY;
     const w  = vp.canvasToWorld(cx, cy);
 
+    // ── Draw: Point ──
+    if (APP.tool.mode === 'point') {
+      if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
+      const lw = parseFloat(document.getElementById('add-lw').value) || 80;
+      const z  = parseFloat(document.getElementById('add-z').value)  || 1.5;
+      const name = `点声源_${APP.objects.length + 1}`;
+      invoke('add_point_source', {
+        scenarioId: APP.currentScenarioId, name,
+        x: w.x, y: w.y, z, lwDb: lw,
+      }).then(() => { loadObjects().then(renderObjectList); })
+        .catch(err => showStatus('添加失败: ' + err, 'err'));
+      return;
+    }
+
+    // ── Draw: Road / Barrier ──
+    if (APP.tool.mode === 'road' || APP.tool.mode === 'barrier') {
+      if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
+      APP.tool.draftVerts.push([w.x, w.y, 0]);
+      APP.tool.phase = 1;
+      vp.requestRedraw();
+      return;
+    }
+
+    // ── Select ──
     if (APP.tool.mode === 'select') {
       const hit = HitTest.test(cx, cy);
       if (hit && hit.type === 'vertex') {
@@ -947,6 +1077,20 @@ const TC = {
   },
 
   onMouseMove(e) {
+    // Rubber-band for draw tools
+    if (APP.tool.phase === 1 && (APP.tool.mode === 'road' || APP.tool.mode === 'barrier')) {
+      const w = vp.canvasToWorld(e.offsetX, e.offsetY);
+      APP.tool.draftMouse = [w.x, w.y, 0];
+      vp.requestRedraw();
+      return;
+    }
+    if (APP.tool.mode === 'point') {
+      const w = vp.canvasToWorld(e.offsetX, e.offsetY);
+      APP.tool.draftMouse = [w.x, w.y, 0];
+      vp.requestRedraw();
+      return;
+    }
+    // Drag
     if (!APP.drag.active) return;
     const w  = vp.canvasToWorld(e.offsetX, e.offsetY);
     const dx = w.x - APP.drag.startWorld.x;
@@ -1012,17 +1156,148 @@ const TC = {
     };
     vp.requestRedraw();
   },
+
+  onDblClick(e) {
+    if (APP.tool.mode === 'road' || APP.tool.mode === 'barrier') {
+      // Remove the last vertex added by mousedown on this dblclick
+      if (APP.tool.draftVerts.length > 0) APP.tool.draftVerts.pop();
+      this._finishPolyline();
+    }
+  },
 };
 
-// ── 数据加载 ─────────────────────────────────────────────────────────────
-async function loadProjects() { /* Phase 20C */ }
+// ── 工具函数 ─────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;');
+}
 
+// ── 项目 / 场景 UI ────────────────────────────────────────────────────────
+async function loadProjects() {
+  try {
+    APP.projects = await invoke('list_projects');
+  } catch(err) {
+    APP.projects = [];
+    showStatus('加载项目失败: ' + err, 'err');
+  }
+  renderProjectTree();
+}
+
+function renderProjectTree() {
+  const tree = document.getElementById('project-tree');
+  if (!APP.projects.length) {
+    tree.innerHTML = '<div class="empty-state">暂无项目<br>点击 + 新建</div>';
+    return;
+  }
+  tree.innerHTML = APP.projects.map(proj => `
+    <div class="proj-item">
+      <div class="proj-name-row">
+        <span class="proj-icon">📁</span>
+        <span class="proj-name-text">${escHtml(proj.name)}</span>
+        <button class="add-btn" data-proj-id="${proj.id}" title="新建场景">+</button>
+      </div>
+      ${(proj.scenarios || []).map(sc => `
+        <div class="scenario-row${sc.id === APP.currentScenarioId ? ' active' : ''}"
+             data-sid="${sc.id}" data-pid="${proj.id}">
+          <span class="sc-icon">📋</span>
+          <span class="sc-name">${escHtml(sc.name)}</span>
+        </div>`).join('')}
+    </div>`).join('');
+
+  tree.querySelectorAll('.add-btn[data-proj-id]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      promptNewScenario(btn.dataset.projId);
+    });
+  });
+  tree.querySelectorAll('.scenario-row').forEach(row => {
+    row.addEventListener('click', () => selectScenario(row.dataset.pid, row.dataset.sid));
+  });
+}
+
+async function promptNewProject() {
+  const name = prompt('项目名称：');
+  if (!name) return;
+  try {
+    await invoke('create_project', { name });
+    await loadProjects();
+  } catch(err) { showStatus('创建项目失败: ' + err, 'err'); }
+}
+
+async function promptNewScenario(projectId) {
+  const name = prompt('场景名称：');
+  if (!name) return;
+  try {
+    await invoke('create_scenario', { projectId, name });
+    await loadProjects();
+  } catch(err) { showStatus('创建场景失败: ' + err, 'err'); }
+}
+
+async function selectScenario(projectId, scenarioId) {
+  APP.currentProjectId = projectId;
+  APP.currentScenarioId = scenarioId;
+  const sc = APP.projects.flatMap(p => p.scenarios || []).find(s => s.id === scenarioId);
+  document.getElementById('status-scenario').textContent = sc?.name || scenarioId;
+  document.getElementById('add-note').style.display = 'none';
+  renderProjectTree();
+  await loadObjects();
+  renderObjectList();
+}
+
+function renderObjectList() {
+  const list  = document.getElementById('object-list');
+  const badge = document.getElementById('obj-count');
+  badge.textContent = APP.objects.length;
+  if (!APP.objects.length) {
+    list.innerHTML = '<div class="empty-state">场景中暂无对象</div>';
+    return;
+  }
+  const dotClass = { point_source:'dot-ps', road_source:'dot-road', barrier:'dot-bar' };
+  list.innerHTML = APP.objects.map(obj => {
+    const sel = APP.selectedIds.has(obj.row_id);
+    return `<div class="obj-row${sel?' selected':''}" data-id="${obj.row_id}">
+      <span class="dot ${dotClass[obj.object_type]||''}"></span>
+      <span class="oname" title="${escHtml(obj.name)}">${escHtml(obj.name)}</span>
+      <button class="odel" data-id="${obj.row_id}" title="删除">✕</button>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.obj-row').forEach(row => {
+    row.addEventListener('click', e => {
+      if (e.target.classList.contains('odel')) return;
+      const id = parseInt(row.dataset.id);
+      if (!e.ctrlKey) APP.selectedIds = new Set();
+      APP.selectedIds.has(id) ? APP.selectedIds.delete(id) : APP.selectedIds.add(id);
+      renderObjectList();
+      vp.requestRedraw();
+    });
+  });
+  list.querySelectorAll('.odel').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.id);
+      try {
+        await invoke('remove_object', { scenarioId: APP.currentScenarioId, rowId: id });
+        APP.selectedIds.delete(id);
+        await loadObjects();
+        renderObjectList();
+      } catch(err) { showStatus('删除失败: ' + err, 'err'); }
+    });
+  });
+}
+
+// ── 数据加载 ─────────────────────────────────────────────────────────────
 async function loadObjects() {
-  if (!APP.currentScenarioId) { APP.objects = []; vp.requestRedraw(); return; }
+  if (!APP.currentScenarioId) {
+    APP.objects = [];
+    vp.requestRedraw();
+    return;
+  }
   try {
     APP.objects = await invoke('list_objects', { scenarioId: APP.currentScenarioId });
     APP.selectedIds = new Set();
     vp.fitToObjects(APP.objects, APP.calcResult);
+    vp.requestRedraw();
   } catch(err) {
     showStatus('加载对象失败: ' + err, 'err');
   }
@@ -1067,9 +1342,93 @@ document.addEventListener('DOMContentLoaded', () => {
   drawLegend();
   setActiveTool('select');
 
-  // Phase 20C: loadProjects()
-  showStatus('Phase 20B 加载完成 — 对象渲染 + 选择 + 顶点拖拽可用', 'ready');
+  // ── 新建项目 ──
+  document.getElementById('btn-new-project').addEventListener('click', promptNewProject);
+  document.getElementById('btn-new-proj2').addEventListener('click', promptNewProject);
+
+  // ── 右侧面板按钮 ──
+  document.getElementById('btn-add-point').addEventListener('click', async () => {
+    if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
+    const name = document.getElementById('add-name').value || `点声源_${APP.objects.length + 1}`;
+    const x  = parseFloat(document.getElementById('add-x').value)  || 0;
+    const y  = parseFloat(document.getElementById('add-y').value)  || 0;
+    const z  = parseFloat(document.getElementById('add-z').value)  || 1.5;
+    const lw = parseFloat(document.getElementById('add-lw').value) || 80;
+    try {
+      await invoke('add_point_source', { scenarioId: APP.currentScenarioId, name, x, y, z, lwDb: lw });
+      await loadObjects();
+      renderObjectList();
+    } catch(err) { showStatus('添加失败: ' + err, 'err'); }
+  });
+
+  document.getElementById('btn-draw-road').addEventListener('click', () => {
+    if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
+    setActiveTool('road');
+    TC._startDraw('road');
+    showStatus('单击添加顶点，双击完成，Esc 取消', 'ready');
+  });
+
+  document.getElementById('btn-draw-barrier').addEventListener('click', () => {
+    if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
+    setActiveTool('barrier');
+    TC._startDraw('barrier');
+    showStatus('单击添加顶点，双击完成，Esc 取消', 'ready');
+  });
+
+  // ── 计算按钮 ──
+  async function runCalc() {
+    if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
+    if (!APP.objects.length)    { showStatus('请先添加声源对象', 'err'); return; }
+    const metric = document.getElementById('calc-metric').value;
+    const res    = parseFloat(document.getElementById('calc-res').value)    || 10;
+    const extent = parseFloat(document.getElementById('calc-extent').value) || 500;
+    showStatus('计算中…', 'run');
+    try {
+      APP.calcResult = await invoke('run_calculation', {
+        scenarioId: APP.currentScenarioId, metric, resolutionM: res, extentM: extent,
+      });
+      document.getElementById('map-overlay').classList.add('hidden');
+      vp.fitToObjects(APP.objects, APP.calcResult);
+      // Phase 20G: _drawHeatmap
+      showStatus(`计算完成 — ${APP.calcResult.points?.length ?? 0} 个格点`, 'ready');
+      _updateResultsPanel(APP.calcResult);
+    } catch(err) { showStatus('计算失败: ' + err, 'err'); }
+  }
+  document.getElementById('btn-run').addEventListener('click',  runCalc);
+  document.getElementById('btn-run2').addEventListener('click', runCalc);
+
+  // ── 导出按钮 ──
+  document.querySelectorAll('[data-export]').forEach(a => {
+    a.addEventListener('click', async () => {
+      if (!APP.calcResult) { showStatus('请先计算', 'err'); return; }
+      const fmt = a.dataset.export;
+      try {
+        const path = await saveDialog({ filters:[{ name:fmt.toUpperCase(), extensions:[fmt] }] });
+        if (!path) return;
+        await invoke('export_result', { scenarioId: APP.currentScenarioId, format: fmt, path });
+        showStatus('导出成功: ' + path, 'ready');
+      } catch(err) { showStatus('导出失败: ' + err, 'err'); }
+    });
+  });
+
+  loadProjects();
+  showStatus('Phase 20C 加载完成 — 项目/场景/绘制工具可用', 'ready');
 });
+
+function _updateResultsPanel(result) {
+  if (!result) return;
+  const body = document.getElementById('results-body');
+  const stats = result.stats || {};
+  body.innerHTML = `
+    <div class="stat-row"><span class="stat-label">最大值</span>
+      <span class="stat-val high">${(stats.max_db||0).toFixed(1)} dB</span></div>
+    <div class="stat-row"><span class="stat-label">平均值</span>
+      <span class="stat-val mid">${(stats.avg_db||0).toFixed(1)} dB</span></div>
+    <div class="stat-row"><span class="stat-label">最小值</span>
+      <span class="stat-val low">${(stats.min_db||0).toFixed(1)} dB</span></div>
+    <div class="stat-row"><span class="stat-label">格点数</span>
+      <span class="stat-val">${result.points?.length ?? 0}</span></div>`;
+}
 </script>
 </body>
 </html>
