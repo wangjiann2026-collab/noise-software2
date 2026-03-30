@@ -564,7 +564,7 @@ const Renderer2D = {
     // Phase 20B: _drawHeatmap()
     this._drawObjects();
     this._drawDraft();
-    // Phase 20D: _drawPreview()
+    this._drawPreview();
     this._drawSelection();
     this._drawAxisIndicator();
   },
@@ -731,6 +731,68 @@ const Renderer2D = {
     ctx.restore();
   },
 
+  _drawPreview() {
+    const t = APP.tool;
+    if (!t.previewObjs.length) return;
+    const { ctx } = this.vp;
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    ctx.setLineDash([5, 4]);
+    t.previewObjs.forEach(obj => {
+      ctx.strokeStyle = '#58a6ff';
+      ctx.fillStyle   = 'rgba(88,166,255,0.15)';
+      if (obj.object_type === 'point_source' && obj.position) {
+        const p = this.vp.worldToCanvas(obj.position[0], obj.position[1]);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x-6,p.y); ctx.lineTo(p.x+6,p.y);
+        ctx.moveTo(p.x,p.y-6); ctx.lineTo(p.x,p.y+6);
+        ctx.stroke();
+      } else {
+        const verts = obj.vertices || [];
+        if (verts.length < 2) return;
+        ctx.lineWidth = obj.object_type === 'barrier' ? 4 : 2.5;
+        ctx.lineJoin  = 'round';
+        ctx.beginPath();
+        verts.forEach((v, i) => {
+          const p = this.vp.worldToCanvas(v[0], v[1]);
+          i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+      }
+    });
+    // Arrow from base → mouse for move/copy
+    const mode = t.mode;
+    if ((mode === 'move' || mode === 'copy') && t.basePoint && t.draftMouse && t.phase === 2) {
+      const a = this.vp.worldToCanvas(t.basePoint.x, t.basePoint.y);
+      const b = this.vp.worldToCanvas(t.draftMouse[0], t.draftMouse[1]);
+      ctx.globalAlpha  = 0.7;
+      ctx.strokeStyle  = '#58a6ff';
+      ctx.fillStyle    = '#58a6ff';
+      ctx.lineWidth    = 1.5;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - 10*Math.cos(ang-0.4), b.y - 10*Math.sin(ang-0.4));
+      ctx.lineTo(b.x - 10*Math.cos(ang+0.4), b.y - 10*Math.sin(ang+0.4));
+      ctx.closePath(); ctx.fill();
+    }
+    // Mirror axis line
+    if (mode === 'mirror' && t.basePoint && t.draftMouse) {
+      const a = this.vp.worldToCanvas(t.basePoint.x, t.basePoint.y);
+      const b = this.vp.worldToCanvas(t.draftMouse[0], t.draftMouse[1]);
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = '#f0883e';
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([8, 4]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    ctx.restore();
+  },
+
   _drawSelection() {
     if (!APP.selectedIds.size) return;
     const { ctx } = this.vp;
@@ -829,6 +891,12 @@ document.addEventListener('keydown', e => {
   if (k === 'f') { vp.fitToObjects(APP.objects, APP.calcResult); return; }
   if (map[k]) { setActiveTool(map[k]); return; }
   if (k === 'escape') {
+    APP.tool.previewObjs = [];
+    APP.tool.phase = 0;
+    if (['move','rotate','scale','mirror','copy'].includes(APP.tool.mode)) {
+      setActiveTool('select');
+      return;
+    }
     TC._cancelDraft();
   }
   if (k === 'delete' || k === 'backspace') {
@@ -876,7 +944,15 @@ function setActiveTool(mode) {
   document.getElementById('status-hint').textContent = hints[mode] || '';
   const canvas2d = document.getElementById('canvas-2d');
   canvas2d.style.cursor = mode === 'pan' ? 'grab' : 'crosshair';
-  // Phase 20D: UIController.updateCmdPanel()
+  const cmdModes = ['move','rotate','scale','mirror','copy'];
+  if (cmdModes.includes(mode)) {
+    CmdController.start(mode);
+  } else {
+    // clear any lingering preview
+    APP.tool.previewObjs = [];
+    APP.tool.phase = 0;
+    if (typeof UIController !== 'undefined') UIController.updateCmdPanel();
+  }
 }
 
 // ── 视图切换（Phase 20F 填充 3D 逻辑） ──────────────────────────────────
@@ -1018,6 +1094,13 @@ const TC = {
     const cx = e.offsetX, cy = e.offsetY;
     const w  = vp.canvasToWorld(cx, cy);
 
+    // ── Transform commands ──
+    const cmdModes = ['move','rotate','scale','mirror','copy'];
+    if (cmdModes.includes(APP.tool.mode)) {
+      CmdController.onMouseDown(e);
+      return;
+    }
+
     // ── Draw: Point ──
     if (APP.tool.mode === 'point') {
       if (!APP.currentScenarioId) { showStatus('请先选择场景', 'err'); return; }
@@ -1077,6 +1160,11 @@ const TC = {
   },
 
   onMouseMove(e) {
+    // Transform command preview
+    if (['move','rotate','scale','mirror','copy'].includes(APP.tool.mode)) {
+      CmdController.onMouseMove(e);
+      return;
+    }
     // Rubber-band for draw tools
     if (APP.tool.phase === 1 && (APP.tool.mode === 'road' || APP.tool.mode === 'barrier')) {
       const w = vp.canvasToWorld(e.offsetX, e.offsetY);
@@ -1163,6 +1251,186 @@ const TC = {
       if (APP.tool.draftVerts.length > 0) APP.tool.draftVerts.pop();
       this._finishPolyline();
     }
+  },
+};
+
+// ── Preview helpers ──────────────────────────────────────────────────────
+function _cloneObj(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+function _buildTranslatePreview(dx, dy) {
+  return APP.objects.filter(o => APP.selectedIds.has(o.row_id)).map(obj => {
+    const c = _cloneObj(obj);
+    if (c.position) c.position = [c.position[0]+dx, c.position[1]+dy, c.position[2]||0];
+    if (c.vertices) c.vertices = c.vertices.map(v => [v[0]+dx, v[1]+dy, v[2]||0]);
+    return c;
+  });
+}
+
+function _buildMirrorPreview(x1, y1, x2, y2) {
+  const dx = x2-x1, dy = y2-y1, lenSq = dx*dx + dy*dy;
+  if (lenSq < 1e-10) return [];
+  function mirrorPt(px, py) {
+    const t = ((px-x1)*dx + (py-y1)*dy) / lenSq;
+    return [2*(x1+t*dx)-px, 2*(y1+t*dy)-py];
+  }
+  return APP.objects.filter(o => APP.selectedIds.has(o.row_id)).map(obj => {
+    const c = _cloneObj(obj);
+    if (c.position) { const [mx,my] = mirrorPt(c.position[0],c.position[1]); c.position=[mx,my,c.position[2]||0]; }
+    if (c.vertices) c.vertices = c.vertices.map(v => { const [mx,my]=mirrorPt(v[0],v[1]); return [mx,my,v[2]||0]; });
+    return c;
+  });
+}
+
+// ── UIController ─────────────────────────────────────────────────────────
+const UIController = {
+  updateCmdPanel() {
+    const mode = APP.tool.mode;
+    const cmdCard = document.getElementById('card-cmd');
+    const isCmdMode = ['move','rotate','scale','mirror','copy'].includes(mode);
+    cmdCard.style.display = isCmdMode ? '' : 'none';
+    if (!isCmdMode) return;
+
+    const titles = { move:'平移', rotate:'旋转', scale:'缩放', mirror:'镜像', copy:'复制' };
+    document.getElementById('cmd-title').textContent = titles[mode];
+
+    const body = document.getElementById('cmd-body');
+    if (mode === 'rotate') {
+      body.innerHTML = `
+        <div class="form-group"><label>角度 (°)</label>
+          <input id="cmd-angle" type="number" value="90" step="5"></div>
+        <div class="form-group"><label>基点</label>
+          <div class="note" id="cmd-bp-label">点击画布设置基点</div></div>
+        <button class="btn-full primary" id="cmd-apply">应用</button>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else if (mode === 'scale') {
+      body.innerHTML = `
+        <div class="form-group"><label>比例因子</label>
+          <input id="cmd-scale" type="number" value="2" step="0.1" min="0.01"></div>
+        <div class="form-group"><label>基点</label>
+          <div class="note" id="cmd-bp-label">点击画布设置基点</div></div>
+        <button class="btn-full primary" id="cmd-apply">应用</button>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else if (mode === 'mirror') {
+      body.innerHTML = `
+        <div class="form-group"><label>镜像轴</label>
+          <div class="note" id="cmd-bp-label">点击两端点定义轴线</div></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <input id="cmd-keep-orig" type="checkbox" checked style="width:auto;margin:0">
+          <label style="display:inline;font-size:11px;margin:0">保留原始对象</label></div>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else {
+      body.innerHTML = `
+        <div class="note" id="cmd-bp-label">${mode==='copy'?'点击基点 → 目标点（复制）':'点击基点 → 目标点'}</div>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    }
+    document.getElementById('cmd-cancel').addEventListener('click', () => setActiveTool('select'));
+    document.getElementById('cmd-apply')?.addEventListener('click', () => CmdController._applyDirect());
+  },
+};
+
+// ── CmdController ────────────────────────────────────────────────────────
+const CmdController = {
+  start(mode) {
+    if (!APP.selectedIds.size) { showStatus('请先选择对象', 'err'); setActiveTool('select'); return; }
+    APP.tool.phase    = 1;
+    APP.tool.basePoint = null;
+    APP.tool.cmdParams = {};
+    APP.tool.previewObjs = [];
+    APP.tool.draftMouse  = null;
+    UIController.updateCmdPanel();
+    const hints = {
+      move:'点击基点',copy:'点击基点',
+      rotate:'点击旋转中心',scale:'点击缩放中心',
+      mirror:'点击镜像轴第一点',
+    };
+    showStatus(hints[mode] || '', 'ready');
+  },
+
+  onMouseDown(e) {
+    if (e.button !== 0) return;
+    const w    = vp.canvasToWorld(e.offsetX, e.offsetY);
+    const mode = APP.tool.mode;
+
+    if (APP.tool.phase === 1) {
+      APP.tool.basePoint = w;
+      APP.tool.phase     = 2;
+      const lbl = document.getElementById('cmd-bp-label');
+      if (lbl) lbl.textContent = `(${w.x.toFixed(1)}, ${w.y.toFixed(1)})`;
+      if (mode === 'rotate' || mode === 'scale') {
+        showStatus('基点已设置 — 在右侧输入参数后点击「应用」', 'ready');
+      } else if (mode === 'mirror') {
+        showStatus('点击第二点完成轴线', 'ready');
+      } else {
+        showStatus('点击目标点', 'ready');
+      }
+      vp.requestRedraw();
+    } else if (APP.tool.phase === 2) {
+      if (mode === 'move' || mode === 'copy') {
+        this._executeMoveOrCopy(mode, APP.tool.basePoint, w);
+      } else if (mode === 'mirror') {
+        this._executeMirror(APP.tool.basePoint, w);
+      }
+    }
+  },
+
+  onMouseMove(e) {
+    const mode = APP.tool.mode;
+    const w    = vp.canvasToWorld(e.offsetX, e.offsetY);
+    APP.tool.draftMouse = [w.x, w.y, 0];
+    if (APP.tool.phase === 2 && APP.tool.basePoint) {
+      const bp = APP.tool.basePoint;
+      if (mode === 'move' || mode === 'copy') {
+        APP.tool.previewObjs = _buildTranslatePreview(w.x-bp.x, w.y-bp.y);
+      } else if (mode === 'mirror') {
+        APP.tool.previewObjs = _buildMirrorPreview(bp.x, bp.y, w.x, w.y);
+      }
+    }
+    vp.requestRedraw();
+  },
+
+  async _executeMoveOrCopy(mode, base, target) {
+    const dx = target.x - base.x, dy = target.y - base.y;
+    const rowIds = [...APP.selectedIds];
+    APP.tool.previewObjs = []; APP.tool.phase = 0; vp.requestRedraw();
+    try {
+      if (mode === 'move') {
+        await invoke('move_objects', { rowIds, dx, dy, dz: 0 });
+      } else {
+        await invoke('copy_objects', { scenarioId: APP.currentScenarioId, rowIds, dx, dy });
+      }
+      await loadObjects(); renderObjectList(); setActiveTool('select');
+    } catch(err) { showStatus('操作失败: ' + err, 'err'); }
+  },
+
+  async _executeMirror(p1, p2) {
+    const rowIds = [...APP.selectedIds];
+    const keepOriginal = document.getElementById('cmd-keep-orig')?.checked ?? true;
+    APP.tool.previewObjs = []; APP.tool.phase = 0; vp.requestRedraw();
+    try {
+      await invoke('mirror_objects', {
+        scenarioId: APP.currentScenarioId, rowIds,
+        x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, keepOriginal,
+      });
+      await loadObjects(); renderObjectList(); setActiveTool('select');
+    } catch(err) { showStatus('操作失败: ' + err, 'err'); }
+  },
+
+  async _applyDirect() {
+    const mode   = APP.tool.mode;
+    const rowIds = [...APP.selectedIds];
+    const bp     = APP.tool.basePoint;
+    if (!bp) { showStatus('请先在画布上设置基点', 'err'); return; }
+    APP.tool.previewObjs = []; APP.tool.phase = 0; vp.requestRedraw();
+    try {
+      if (mode === 'rotate') {
+        const angleDeg = parseFloat(document.getElementById('cmd-angle')?.value) || 90;
+        await invoke('rotate_objects', { rowIds, cx: bp.x, cy: bp.y, angleDeg });
+      } else if (mode === 'scale') {
+        const factor = parseFloat(document.getElementById('cmd-scale')?.value) || 2;
+        await invoke('scale_objects', { rowIds, cx: bp.x, cy: bp.y, factor });
+      }
+      await loadObjects(); renderObjectList(); setActiveTool('select');
+    } catch(err) { showStatus('操作失败: ' + err, 'err'); }
   },
 };
 
@@ -1412,7 +1680,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadProjects();
-  showStatus('Phase 20C 加载完成 — 项目/场景/绘制工具可用', 'ready');
+  showStatus('Phase 20D 加载完成 — 变换命令 (Move/Rotate/Scale/Mirror/Copy) 可用', 'ready');
 });
 
 function _updateResultsPanel(result) {
