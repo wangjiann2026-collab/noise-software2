@@ -290,6 +290,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
         <span>35</span><span>40</span><span>45</span><span>50</span>
         <span>55</span><span>60</span><span>65</span><span>70</span><span>75+</span>
       </div>
+      <span class="legend-label" style="margin-left:10px">热图透明度</span>
+      <input id="heatmap-opacity" type="range" min="0" max="100" value="65"
+             style="width:72px;height:4px;accent-color:var(--accent);cursor:pointer">
     </div>
   </div>
 
@@ -442,6 +445,7 @@ const APP = {
   objects: [],
   calcResult: null,
   activeView: '2d',
+  heatmapOpacity: 0.65,
   selectedIds: new Set(),
   tool: {
     mode: 'select',
@@ -561,7 +565,7 @@ const Renderer2D = {
     const { ctx, W, H } = this.vp;
     ctx.clearRect(0, 0, W, H);
     this._drawGrid();
-    // Phase 20B: _drawHeatmap()
+    this._drawHeatmap();
     this._drawObjects();
     this._drawDraft();
     this._drawPreview();
@@ -639,6 +643,38 @@ const Renderer2D = {
     // 原点
     ctx.fillStyle = '#484f58';
     ctx.beginPath(); ctx.arc(ox, oy, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  },
+
+  _drawHeatmap() {
+    const res = APP.calcResult;
+    if (!res || !res.points?.length || APP.heatmapOpacity <= 0) return;
+    const { ctx } = this.vp;
+    const pts    = res.points;
+    const minDb  = res.stats?.min_db ?? 35;
+    const maxDb  = res.stats?.max_db ?? 75;
+    const range  = Math.max(maxDb - minDb, 1);
+    const reso   = res.resolution_m || 10;
+
+    // Pixel size of one grid cell
+    const pa = this.vp.worldToCanvas(0, 0);
+    const pb = this.vp.worldToCanvas(reso, reso);
+    const cw = Math.max(1, Math.ceil(Math.abs(pb.x - pa.x) + 0.5));
+    const ch = Math.max(1, Math.ceil(Math.abs(pb.y - pa.y) + 0.5));
+
+    ctx.save();
+    ctx.globalAlpha = APP.heatmapOpacity;
+    pts.forEach(pt => {
+      const x  = Array.isArray(pt) ? pt[0] : pt.x;
+      const y  = Array.isArray(pt) ? pt[1] : pt.y;
+      const db = Array.isArray(pt) ? pt[2] : (pt.db_level ?? pt.db ?? null);
+      if (db === null || db === undefined) return;
+      const t  = Math.max(0, Math.min(1, (db - minDb) / range));
+      const [r, g, b] = dbToRGB(t);
+      const p  = this.vp.worldToCanvas(x - reso / 2, y + reso / 2);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(p.x, p.y, cw, ch);
+    });
     ctx.restore();
   },
 
@@ -1372,10 +1408,15 @@ const TC = {
         } else {
           APP.drag.origVertices = hit.obj.vertices.map(v => [...v]);
         }
+        _updateSelectionCard();
         vp.requestRedraw();
         e.preventDefault();
       } else {
-        if (!e.ctrlKey) { APP.selectedIds = new Set(); vp.requestRedraw(); }
+        if (!e.ctrlKey) {
+          APP.selectedIds = new Set();
+          _updateSelectionCard();
+          vp.requestRedraw();
+        }
       }
     }
   },
@@ -1468,6 +1509,7 @@ const TC = {
       active:false, type:null, rowId:null, vertexIndex:null,
       startCanvas:null, startWorld:null, origPosition:null, origVertices:null,
     };
+    _updateSelectionCard();
     vp.requestRedraw();
   },
 
@@ -2020,6 +2062,7 @@ function renderObjectList() {
       if (!e.ctrlKey) APP.selectedIds = new Set();
       APP.selectedIds.has(id) ? APP.selectedIds.delete(id) : APP.selectedIds.add(id);
       renderObjectList();
+      _updateSelectionCard();
       vp.requestRedraw();
     });
   });
@@ -2142,7 +2185,8 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       document.getElementById('map-overlay').classList.add('hidden');
       vp.fitToObjects(APP.objects, APP.calcResult);
-      // Phase 20G: _drawHeatmap
+      vp.requestRedraw();
+      if (APP.activeView === '3d' && R3D._initialized) R3D.sync();
       showStatus(`计算完成 — ${APP.calcResult.points?.length ?? 0} 个格点`, 'ready');
       _updateResultsPanel(APP.calcResult);
     } catch(err) { showStatus('计算失败: ' + err, 'err'); }
@@ -2164,9 +2208,54 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // ── 热图透明度滑块 ──
+  document.getElementById('heatmap-opacity').addEventListener('input', function() {
+    APP.heatmapOpacity = parseInt(this.value) / 100;
+    vp.requestRedraw();
+  });
+
   loadProjects();
-  showStatus('Phase 20F 加载完成 — 3D 渲染可用，点击工具栏 [3D] 切换', 'ready');
+  showStatus('NoiseCad 桌面版已就绪 — 2D/3D CAD 噪声建模', 'ready');
 });
+
+function _updateSelectionCard() {
+  const card = document.getElementById('card-selection');
+  const body = document.getElementById('selection-body');
+  const sel  = [...APP.selectedIds].map(id => APP.objects.find(o => o.row_id === id)).filter(Boolean);
+  if (!sel.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  if (sel.length > 1) {
+    body.innerHTML = `<div class="note">${sel.length} 个对象已选中</div>`;
+    return;
+  }
+  const obj = sel[0];
+  const typeNames = { point_source:'点声源', road_source:'道路声源', barrier:'噪声墙' };
+  let rows = `
+    <div class="stat-row"><span class="stat-label">ID</span><span class="stat-val">${obj.row_id}</span></div>
+    <div class="stat-row"><span class="stat-label">类型</span><span class="stat-val">${typeNames[obj.object_type]||obj.object_type}</span></div>
+    <div class="stat-row"><span class="stat-label">名称</span><span class="stat-val" style="font-size:11px">${escHtml(obj.name)}</span></div>`;
+  if (obj.object_type === 'point_source' && obj.position) {
+    rows += `
+    <div class="stat-row"><span class="stat-label">X (m)</span><span class="stat-val">${obj.position[0].toFixed(1)}</span></div>
+    <div class="stat-row"><span class="stat-label">Y (m)</span><span class="stat-val">${obj.position[1].toFixed(1)}</span></div>
+    <div class="stat-row"><span class="stat-label">Z (m)</span><span class="stat-val">${(obj.position[2]||0).toFixed(1)}</span></div>
+    <div class="stat-row"><span class="stat-label">Lw (dB)</span><span class="stat-val mid">${(obj.lw_db||0).toFixed(1)}</span></div>`;
+  } else if (obj.vertices?.length) {
+    rows += `<div class="stat-row"><span class="stat-label">顶点数</span><span class="stat-val">${obj.vertices.length}</span></div>`;
+    if (obj.height_m != null)
+      rows += `<div class="stat-row"><span class="stat-label">高度 (m)</span><span class="stat-val">${obj.height_m.toFixed(1)}</span></div>`;
+    if (obj.source_height_m != null)
+      rows += `<div class="stat-row"><span class="stat-label">声源高 (m)</span><span class="stat-val">${obj.source_height_m.toFixed(2)}</span></div>`;
+    // Polyline length
+    let len = 0;
+    for (let i = 0; i < obj.vertices.length - 1; i++) {
+      const [ax,ay] = obj.vertices[i], [bx,by] = obj.vertices[i+1];
+      len += Math.hypot(bx-ax, by-ay);
+    }
+    rows += `<div class="stat-row"><span class="stat-label">长度 (m)</span><span class="stat-val">${len.toFixed(1)}</span></div>`;
+  }
+  body.innerHTML = rows;
+}
 
 function _updateResultsPanel(result) {
   if (!result) return;
