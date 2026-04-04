@@ -733,6 +733,20 @@ const Renderer2D = {
 
   _drawPreview() {
     const t = APP.tool;
+    // Segment highlight for trim / break (drawn even without previewObjs)
+    if ((t.mode === 'trim' || t.mode === 'break') && t.cmdParams?.lastHit) {
+      const { obj, segIdx } = t.cmdParams.lastHit;
+      if (obj.vertices && segIdx < obj.vertices.length - 1) {
+        const { ctx } = this.vp;
+        const a = this.vp.worldToCanvas(obj.vertices[segIdx][0],   obj.vertices[segIdx][1]);
+        const b = this.vp.worldToCanvas(obj.vertices[segIdx+1][0], obj.vertices[segIdx+1][1]);
+        ctx.save();
+        ctx.strokeStyle = t.mode === 'trim' ? '#f85149' : '#f0883e';
+        ctx.lineWidth   = 5; ctx.globalAlpha = 0.75; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.restore();
+      }
+    }
     if (!t.previewObjs.length) return;
     const { ctx } = this.vp;
     ctx.save();
@@ -893,7 +907,9 @@ document.addEventListener('keydown', e => {
   if (k === 'escape') {
     APP.tool.previewObjs = [];
     APP.tool.phase = 0;
-    if (['move','rotate','scale','mirror','copy'].includes(APP.tool.mode)) {
+    APP.tool.cmdParams = {};
+    if (['move','rotate','scale','mirror','copy'].includes(APP.tool.mode)
+        || PolylineCmdController.MODES.includes(APP.tool.mode)) {
       setActiveTool('select');
       return;
     }
@@ -944,13 +960,14 @@ function setActiveTool(mode) {
   document.getElementById('status-hint').textContent = hints[mode] || '';
   const canvas2d = document.getElementById('canvas-2d');
   canvas2d.style.cursor = mode === 'pan' ? 'grab' : 'crosshair';
-  const cmdModes = ['move','rotate','scale','mirror','copy'];
-  if (cmdModes.includes(mode)) {
+  if (['move','rotate','scale','mirror','copy'].includes(mode)) {
     CmdController.start(mode);
+  } else if (PolylineCmdController.MODES.includes(mode)) {
+    PolylineCmdController.start(mode);
   } else {
-    // clear any lingering preview
     APP.tool.previewObjs = [];
     APP.tool.phase = 0;
+    APP.tool.cmdParams = {};
     if (typeof UIController !== 'undefined') UIController.updateCmdPanel();
   }
 }
@@ -1095,9 +1112,13 @@ const TC = {
     const w  = vp.canvasToWorld(cx, cy);
 
     // ── Transform commands ──
-    const cmdModes = ['move','rotate','scale','mirror','copy'];
-    if (cmdModes.includes(APP.tool.mode)) {
+    if (['move','rotate','scale','mirror','copy'].includes(APP.tool.mode)) {
       CmdController.onMouseDown(e);
+      return;
+    }
+    // ── Polyline commands ──
+    if (PolylineCmdController.MODES.includes(APP.tool.mode)) {
+      PolylineCmdController.onMouseDown(e);
       return;
     }
 
@@ -1163,6 +1184,11 @@ const TC = {
     // Transform command preview
     if (['move','rotate','scale','mirror','copy'].includes(APP.tool.mode)) {
       CmdController.onMouseMove(e);
+      return;
+    }
+    // Polyline command hover
+    if (PolylineCmdController.MODES.includes(APP.tool.mode)) {
+      PolylineCmdController.onMouseMove(e);
       return;
     }
     // Rubber-band for draw tools
@@ -1281,17 +1307,252 @@ function _buildMirrorPreview(x1, y1, x2, y2) {
   });
 }
 
+// ── PolylineCmdController ────────────────────────────────────────────────
+const PolylineCmdController = {
+  MODES: ['trim','break','join','offset','extend'],
+
+  start(mode) {
+    APP.tool.phase      = 1;
+    APP.tool.joinFirst  = null;
+    APP.tool.cmdParams  = {};
+    APP.tool.previewObjs = [];
+    APP.tool.draftMouse  = null;
+    UIController.updateCmdPanel();
+    const hints = {
+      trim:   '点击折线段，靠近哪端则修剪该端',
+      break:  '点击折线任意位置打断',
+      join:   '点击第一条折线',
+      offset: '设置右侧距离后点击折线',
+      extend: '点击折线端点',
+    };
+    showStatus(hints[mode] || '', 'ready');
+  },
+
+  // Find nearest segment hit → { obj, segIdx, t, dist }
+  _hitSeg(cx, cy) {
+    let best = null;
+    for (const obj of APP.objects) {
+      if (!obj.vertices || obj.vertices.length < 2) continue;
+      for (let i = 0; i < obj.vertices.length - 1; i++) {
+        const a = vp.worldToCanvas(obj.vertices[i][0],   obj.vertices[i][1]);
+        const b = vp.worldToCanvas(obj.vertices[i+1][0], obj.vertices[i+1][1]);
+        const dist = HitTest._distSeg(cx, cy, a, b);
+        if (dist > HitTest.EDGE_D) continue;
+        const dx = b.x-a.x, dy = b.y-a.y, lenSq = dx*dx+dy*dy;
+        const tSeg = lenSq < 1e-10 ? 0
+          : Math.max(0, Math.min(1, ((cx-a.x)*dx+(cy-a.y)*dy)/lenSq));
+        if (!best || dist < best.dist) best = { obj, segIdx:i, t:tSeg, dist };
+      }
+    }
+    return best;
+  },
+
+  // Find first/last vertex near canvas point → { obj, vertexIndex }
+  _hitEndVertex(cx, cy) {
+    const R = HitTest.HANDLE_R + 5;
+    for (const obj of APP.objects) {
+      if (!obj.vertices || obj.vertices.length < 2) continue;
+      const n = obj.vertices.length;
+      for (const vi of [0, n-1]) {
+        const p = vp.worldToCanvas(obj.vertices[vi][0], obj.vertices[vi][1]);
+        if (Math.abs(p.x-cx) <= R && Math.abs(p.y-cy) <= R)
+          return { obj, vertexIndex: vi };
+      }
+    }
+    return null;
+  },
+
+  async onMouseDown(e) {
+    if (e.button !== 0) return;
+    const cx = e.offsetX, cy = e.offsetY;
+    const w  = vp.canvasToWorld(cx, cy);
+    const mode = APP.tool.mode;
+
+    // ── Trim ──────────────────────────────────────────────────────────────
+    if (mode === 'trim') {
+      const hit = this._hitSeg(cx, cy);
+      if (!hit) { showStatus('未命中折线', 'err'); return; }
+      const { obj, segIdx, t } = hit;
+      // Which side is "nearer"? proportion along full polyline
+      const nSeg = obj.vertices.length - 1;
+      const trimStart = (segIdx + t) / nSeg < 0.5;
+      await this._trimClientSide(obj, segIdx, t, trimStart);
+    }
+
+    // ── Break ──────────────────────────────────────────────────────────────
+    else if (mode === 'break') {
+      const hit = this._hitSeg(cx, cy);
+      if (!hit) { showStatus('未命中折线', 'err'); return; }
+      try {
+        await invoke('break_polyline', {
+          scenarioId: APP.currentScenarioId,
+          rowId: hit.obj.row_id, segIdx: hit.segIdx, t: hit.t,
+        });
+        APP.tool.cmdParams.lastHit = null;
+        await loadObjects(); renderObjectList();
+      } catch(err) {
+        // fallback: client-side break
+        await this._breakClientSide(hit.obj, hit.segIdx, hit.t);
+      }
+    }
+
+    // ── Join ───────────────────────────────────────────────────────────────
+    else if (mode === 'join') {
+      const hit = HitTest.test(cx, cy);
+      const obj = hit?.obj;
+      if (!obj || obj.object_type === 'point_source') { showStatus('请点击折线对象', 'err'); return; }
+      if (!APP.tool.joinFirst) {
+        APP.tool.joinFirst = obj.row_id;
+        APP.selectedIds = new Set([obj.row_id]);
+        document.getElementById('cmd-join-hint').textContent = '已选第一条，点击第二条折线';
+        showStatus('点击第二条折线', 'ready');
+        vp.requestRedraw();
+      } else {
+        if (obj.row_id === APP.tool.joinFirst) { showStatus('请点击不同的折线', 'err'); return; }
+        try {
+          await invoke('join_polylines', { rowIdA: APP.tool.joinFirst, rowIdB: obj.row_id });
+          APP.tool.joinFirst = null;
+          await loadObjects(); renderObjectList();
+          setActiveTool('select');
+        } catch(err) { showStatus('合并失败: ' + err, 'err'); }
+      }
+    }
+
+    // ── Offset ─────────────────────────────────────────────────────────────
+    else if (mode === 'offset') {
+      const hit = HitTest.test(cx, cy);
+      const obj = hit?.obj;
+      if (!obj || obj.object_type === 'point_source') { showStatus('请点击折线对象', 'err'); return; }
+      const dist = parseFloat(document.getElementById('cmd-offset-dist')?.value) || 5;
+      try {
+        await invoke('offset_polyline', {
+          scenarioId: APP.currentScenarioId, rowId: obj.row_id, distance: dist,
+        });
+        await loadObjects(); renderObjectList();
+      } catch(err) { showStatus('偏移失败: ' + err, 'err'); }
+    }
+
+    // ── Extend ─────────────────────────────────────────────────────────────
+    else if (mode === 'extend') {
+      if (APP.tool.phase === 1) {
+        const hit = this._hitEndVertex(cx, cy);
+        if (!hit) { showStatus('请点击折线端点（端部顶点附近）', 'err'); return; }
+        APP.tool.cmdParams.extObj = hit.obj;
+        APP.tool.cmdParams.extVi  = hit.vertexIndex;
+        APP.tool.phase = 2;
+        APP.selectedIds = new Set([hit.obj.row_id]);
+        const lbl = document.getElementById('cmd-ext-hint');
+        if (lbl) lbl.textContent = '点击目标位置';
+        showStatus('点击目标点延伸', 'ready');
+        vp.requestRedraw();
+      } else if (APP.tool.phase === 2) {
+        const { extObj, extVi } = APP.tool.cmdParams;
+        const newVerts = extObj.vertices.map(v => [...v]);
+        newVerts[extVi] = [w.x, w.y, newVerts[extVi][2] || 0];
+        try {
+          await invoke('update_object_geometry', {
+            scenarioId: APP.currentScenarioId,
+            rowId: extObj.row_id, position: null, vertices: newVerts,
+          });
+          APP.tool.phase = 1;
+          APP.tool.cmdParams = {};
+          APP.tool.previewObjs = [];
+          const lbl = document.getElementById('cmd-ext-hint');
+          if (lbl) lbl.textContent = '点击折线端点';
+          showStatus('延伸完成，继续点击端点或切换工具', 'ready');
+          await loadObjects(); renderObjectList();
+        } catch(err) { showStatus('延伸失败: ' + err, 'err'); }
+      }
+    }
+  },
+
+  onMouseMove(e) {
+    const mode = APP.tool.mode;
+    const cx = e.offsetX, cy = e.offsetY;
+    const w  = vp.canvasToWorld(cx, cy);
+    APP.tool.draftMouse = [w.x, w.y, 0];
+
+    if (mode === 'trim' || mode === 'break') {
+      APP.tool.cmdParams.lastHit = this._hitSeg(cx, cy) || null;
+    } else if (mode === 'extend' && APP.tool.phase === 2) {
+      const { extObj, extVi } = APP.tool.cmdParams;
+      if (extObj) {
+        const c = _cloneObj(extObj);
+        c.vertices[extVi] = [w.x, w.y, c.vertices[extVi][2] || 0];
+        APP.tool.previewObjs = [c];
+      }
+    }
+    vp.requestRedraw();
+  },
+
+  // Client-side trim: keep one side of the cut
+  async _trimClientSide(obj, segIdx, t, trimStart) {
+    const v = obj.vertices;
+    const ax = v[segIdx][0], ay = v[segIdx][1], az = v[segIdx][2] || 0;
+    const bx = v[segIdx+1][0], by = v[segIdx+1][1], bz = v[segIdx+1][2] || 0;
+    const hx = ax + t*(bx-ax), hy = ay + t*(by-ay), hz = az + t*(bz-az);
+    const newVerts = trimStart
+      ? [[hx,hy,hz], ...v.slice(segIdx+1)]
+      : [...v.slice(0, segIdx+1), [hx,hy,hz]];
+    if (newVerts.length < 2) { showStatus('修剪后顶点不足', 'err'); return; }
+    try {
+      await invoke('update_object_geometry', {
+        scenarioId: APP.currentScenarioId,
+        rowId: obj.row_id, position: null, vertices: newVerts,
+      });
+      APP.tool.cmdParams.lastHit = null;
+      await loadObjects(); renderObjectList();
+    } catch(err) { showStatus('修剪失败: ' + err, 'err'); }
+  },
+
+  // Client-side break: split into two objects (both same type / properties)
+  async _breakClientSide(obj, segIdx, t) {
+    const v = obj.vertices;
+    const ax = v[segIdx][0], ay = v[segIdx][1], az = v[segIdx][2] || 0;
+    const bx = v[segIdx+1][0], by = v[segIdx+1][1], bz = v[segIdx+1][2] || 0;
+    const hx = ax + t*(bx-ax), hy = ay + t*(by-ay), hz = az + t*(bz-az);
+    const vertsA = [...v.slice(0, segIdx+1), [hx,hy,hz]];
+    const vertsB = [[hx,hy,hz], ...v.slice(segIdx+1)];
+    if (vertsA.length < 2 || vertsB.length < 2) { showStatus('打断位置无效', 'err'); return; }
+    try {
+      // Replace original with vertsA, add new object for vertsB
+      await invoke('update_object_geometry', {
+        scenarioId: APP.currentScenarioId,
+        rowId: obj.row_id, position: null, vertices: vertsA,
+      });
+      const newName = obj.name + '_2';
+      if (obj.object_type === 'road_source') {
+        await invoke('add_road_source', {
+          scenarioId: APP.currentScenarioId, name: newName,
+          vertices: vertsB, sourceHeightM: obj.source_height_m || 0.05,
+        });
+      } else {
+        await invoke('add_barrier', {
+          scenarioId: APP.currentScenarioId, name: newName,
+          vertices: vertsB, heightM: obj.height_m || 3.0,
+        });
+      }
+      APP.tool.cmdParams.lastHit = null;
+      await loadObjects(); renderObjectList();
+    } catch(err) { showStatus('打断失败: ' + err, 'err'); }
+  },
+};
+
 // ── UIController ─────────────────────────────────────────────────────────
 const UIController = {
   updateCmdPanel() {
     const mode = APP.tool.mode;
     const cmdCard = document.getElementById('card-cmd');
-    const isCmdMode = ['move','rotate','scale','mirror','copy'].includes(mode);
+    const isCmdMode = ['move','rotate','scale','mirror','copy',
+                        'trim','break','join','offset','extend'].includes(mode);
     cmdCard.style.display = isCmdMode ? '' : 'none';
     if (!isCmdMode) return;
 
-    const titles = { move:'平移', rotate:'旋转', scale:'缩放', mirror:'镜像', copy:'复制' };
-    document.getElementById('cmd-title').textContent = titles[mode];
+    const titles = {
+      move:'平移', rotate:'旋转', scale:'缩放', mirror:'镜像', copy:'复制',
+      trim:'修剪', break:'打断', join:'合并', offset:'偏移', extend:'延伸',
+    };
+    document.getElementById('cmd-title').textContent = titles[mode] || mode;
 
     const body = document.getElementById('cmd-body');
     if (mode === 'rotate') {
@@ -1317,6 +1578,28 @@ const UIController = {
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
           <input id="cmd-keep-orig" type="checkbox" checked style="width:auto;margin:0">
           <label style="display:inline;font-size:11px;margin:0">保留原始对象</label></div>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else if (mode === 'trim') {
+      body.innerHTML = `
+        <div class="note">点击折线：靠近哪端则修剪该端</div>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else if (mode === 'break') {
+      body.innerHTML = `
+        <div class="note">点击折线任意位置打断为两段</div>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else if (mode === 'join') {
+      body.innerHTML = `
+        <div class="note" id="cmd-join-hint">点击第一条折线</div>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else if (mode === 'offset') {
+      body.innerHTML = `
+        <div class="form-group"><label>偏移距离 (m)</label>
+          <input id="cmd-offset-dist" type="number" value="5" step="0.5" min="0.1"></div>
+        <div class="note">正值左偏，负值右偏；点击折线执行</div>
+        <button class="btn-full" id="cmd-cancel">取消</button>`;
+    } else if (mode === 'extend') {
+      body.innerHTML = `
+        <div class="note" id="cmd-ext-hint">点击折线端点</div>
         <button class="btn-full" id="cmd-cancel">取消</button>`;
     } else {
       body.innerHTML = `
@@ -1680,7 +1963,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadProjects();
-  showStatus('Phase 20D 加载完成 — 变换命令 (Move/Rotate/Scale/Mirror/Copy) 可用', 'ready');
+  showStatus('Phase 20E 加载完成 — 折线命令 (Trim/Break/Join/Offset/Extend) 可用', 'ready');
 });
 
 function _updateResultsPanel(result) {
