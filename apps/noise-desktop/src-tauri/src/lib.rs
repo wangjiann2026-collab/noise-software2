@@ -14,7 +14,7 @@ use nalgebra::Point3;
 use noise_data::{
     db::Database,
     repository::{ProjectRepository, SceneObjectRepository, CalculationRepository},
-    scenario::Project,
+    scenario::{Project, ScenarioVariant},
     entities::{
         SceneObject, Barrier,
         sources::{PointSource, RoadSource, RoadSurface},
@@ -197,6 +197,29 @@ pub fn get_project(
         base_scenario: base,
         variants,
     })
+}
+
+/// Add a new scenario variant to an existing project.
+#[tauri::command]
+pub fn add_scenario(
+    state: State<AppState>,
+    project_id: String,
+    name: String,
+) -> Result<ScenarioInfo, String> {
+    let uuid = uuid::Uuid::parse_str(&project_id)
+        .map_err(|e| format!("invalid project_id: {e}"))?;
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = ProjectRepository::new(db.connection());
+    let mut project = repo.get(uuid).map_err(|e| e.to_string())?;
+    let variant = ScenarioVariant::new(&name, project.base_scenario.id);
+    let info = ScenarioInfo {
+        id: variant.id.to_string(),
+        name: variant.name.clone(),
+        is_base: false,
+    };
+    project.variants.push(variant);
+    repo.insert(&project).map_err(|e| e.to_string())?;
+    Ok(info)
 }
 
 /// Delete a project (cascades to scenarios, objects, and calculations).
@@ -1166,6 +1189,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::new_project,
+            commands::add_scenario,
             commands::list_projects,
             commands::get_project,
             commands::delete_project,

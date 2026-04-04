@@ -648,33 +648,34 @@ const Renderer2D = {
 
   _drawHeatmap() {
     const res = APP.calcResult;
-    if (!res || !res.points?.length || APP.heatmapOpacity <= 0) return;
+    if (!res || !res.levels?.length || APP.heatmapOpacity <= 0) return;
     const { ctx } = this.vp;
-    const pts    = res.points;
-    const minDb  = res.stats?.min_db ?? 35;
-    const maxDb  = res.stats?.max_db ?? 75;
-    const range  = Math.max(maxDb - minDb, 1);
-    const reso   = res.resolution_m || 10;
+    const { levels, nx, ny, xmin, ymin, cellsize, min_db, max_db } = res;
+    const minDb = min_db ?? 35;
+    const maxDb = max_db ?? 75;
+    const range = Math.max(maxDb - minDb, 1);
 
     // Pixel size of one grid cell
     const pa = this.vp.worldToCanvas(0, 0);
-    const pb = this.vp.worldToCanvas(reso, reso);
+    const pb = this.vp.worldToCanvas(cellsize, cellsize);
     const cw = Math.max(1, Math.ceil(Math.abs(pb.x - pa.x) + 0.5));
     const ch = Math.max(1, Math.ceil(Math.abs(pb.y - pa.y) + 0.5));
 
     ctx.save();
     ctx.globalAlpha = APP.heatmapOpacity;
-    pts.forEach(pt => {
-      const x  = Array.isArray(pt) ? pt[0] : pt.x;
-      const y  = Array.isArray(pt) ? pt[1] : pt.y;
-      const db = Array.isArray(pt) ? pt[2] : (pt.db_level ?? pt.db ?? null);
-      if (db === null || db === undefined) return;
-      const t  = Math.max(0, Math.min(1, (db - minDb) / range));
-      const [r, g, b] = dbToRGB(t);
-      const p  = this.vp.worldToCanvas(x - reso / 2, y + reso / 2);
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(p.x, p.y, cw, ch);
-    });
+    for (let iy = 0; iy < ny; iy++) {
+      for (let ix = 0; ix < nx; ix++) {
+        const db = levels[iy * nx + ix];
+        if (!isFinite(db)) continue;
+        const t = Math.max(0, Math.min(1, (db - minDb) / range));
+        const [r, g, b] = dbToRGB(t);
+        const wx = xmin + (ix + 0.5) * cellsize;
+        const wy = ymin + (iy + 0.5) * cellsize;
+        const p  = this.vp.worldToCanvas(wx - cellsize / 2, wy + cellsize / 2);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(p.x, p.y, cw, ch);
+      }
+    }
     ctx.restore();
   },
 
@@ -954,7 +955,7 @@ document.addEventListener('keydown', e => {
   if (k === 'delete' || k === 'backspace') {
     if (!APP.selectedIds.size || !APP.currentScenarioId) return;
     Promise.all([...APP.selectedIds].map(id =>
-      invoke('remove_object', { scenarioId: APP.currentScenarioId, rowId: id })
+      invoke('delete_object', { scenarioId: APP.currentScenarioId, rowId: id })
         .catch(err => console.warn('remove_object failed:', err))
     )).then(() => loadObjects());
   }
@@ -1968,7 +1969,18 @@ function escHtml(s) {
 // ── 项目 / 场景 UI ────────────────────────────────────────────────────────
 async function loadProjects() {
   try {
-    APP.projects = await invoke('list_projects');
+    const summaries = await invoke('list_projects');
+    const details = await Promise.all(
+      summaries.map(s => invoke('get_project', { projectId: s.id }))
+    );
+    APP.projects = details.map(p => ({
+      id: p.id,
+      name: p.name,
+      scenarios: [
+        { id: p.base_scenario.id, name: p.base_scenario.name + ' (基准)' },
+        ...(p.variants || []).map(v => ({ id: v.id, name: v.name })),
+      ],
+    }));
   } catch(err) {
     APP.projects = [];
     showStatus('加载项目失败: ' + err, 'err');
@@ -2012,7 +2024,7 @@ async function promptNewProject() {
   const name = prompt('项目名称：');
   if (!name) return;
   try {
-    await invoke('create_project', { name });
+    await invoke('new_project', { name, crsEpsg: 4326 });
     await loadProjects();
   } catch(err) { showStatus('创建项目失败: ' + err, 'err'); }
 }
@@ -2021,7 +2033,7 @@ async function promptNewScenario(projectId) {
   const name = prompt('场景名称：');
   if (!name) return;
   try {
-    await invoke('create_scenario', { projectId, name });
+    await invoke('add_scenario', { projectId, name });
     await loadProjects();
   } catch(err) { showStatus('创建场景失败: ' + err, 'err'); }
 }
@@ -2071,7 +2083,7 @@ function renderObjectList() {
       e.stopPropagation();
       const id = parseInt(btn.dataset.id);
       try {
-        await invoke('remove_object', { scenarioId: APP.currentScenarioId, rowId: id });
+        await invoke('delete_object', { scenarioId: APP.currentScenarioId, rowId: id });
         APP.selectedIds.delete(id);
         await loadObjects();
         renderObjectList();
@@ -2178,16 +2190,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const metric = document.getElementById('calc-metric').value;
     const res    = parseFloat(document.getElementById('calc-res').value)    || 10;
     const extent = parseFloat(document.getElementById('calc-extent').value) || 500;
+    // Compute bounding box from objects, fallback to extent padding around origin
+    let bxmin = Infinity, bymin = Infinity, bxmax = -Infinity, bymax = -Infinity;
+    APP.objects.forEach(o => {
+      const pts = o.position ? [[o.position[0], o.position[1]]] : (o.vertices || []);
+      pts.forEach(([x, y]) => { bxmin=Math.min(bxmin,x); bymin=Math.min(bymin,y); bxmax=Math.max(bxmax,x); bymax=Math.max(bymax,y); });
+    });
+    if (!isFinite(bxmin)) { bxmin = -extent/2; bymin = -extent/2; bxmax = extent/2; bymax = extent/2; }
+    else { bxmin -= extent/2; bymin -= extent/2; bxmax += extent/2; bymax += extent/2; }
     showStatus('计算中…', 'run');
     try {
       APP.calcResult = await invoke('run_calculation', {
-        scenarioId: APP.currentScenarioId, metric, resolutionM: res, extentM: extent,
+        scenarioId: APP.currentScenarioId, metric,
+        resolutionM: res,
+        xmin: bxmin, ymin: bymin, xmax: bxmax, ymax: bymax,
       });
       document.getElementById('map-overlay').classList.add('hidden');
       vp.fitToObjects(APP.objects, APP.calcResult);
       vp.requestRedraw();
       if (APP.activeView === '3d' && R3D._initialized) R3D.sync();
-      showStatus(`计算完成 — ${APP.calcResult.points?.length ?? 0} 个格点`, 'ready');
+      const npts = (APP.calcResult.nx || 0) * (APP.calcResult.ny || 0);
+      showStatus(`计算完成 — ${npts} 个格点`, 'ready');
       _updateResultsPanel(APP.calcResult);
     } catch(err) { showStatus('计算失败: ' + err, 'err'); }
   }
@@ -2202,7 +2225,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const path = await saveDialog({ filters:[{ name:fmt.toUpperCase(), extensions:[fmt] }] });
         if (!path) return;
-        await invoke('export_result', { scenarioId: APP.currentScenarioId, format: fmt, path });
+        await invoke('export_file', { calcId: APP.calcResult.calc_id, format: fmt, filePath: path });
         showStatus('导出成功: ' + path, 'ready');
       } catch(err) { showStatus('导出失败: ' + err, 'err'); }
     });
@@ -2260,16 +2283,16 @@ function _updateSelectionCard() {
 function _updateResultsPanel(result) {
   if (!result) return;
   const body = document.getElementById('results-body');
-  const stats = result.stats || {};
+  const npts = (result.nx || 0) * (result.ny || 0);
   body.innerHTML = `
     <div class="stat-row"><span class="stat-label">最大值</span>
-      <span class="stat-val high">${(stats.max_db||0).toFixed(1)} dB</span></div>
+      <span class="stat-val high">${(result.max_db||0).toFixed(1)} dB</span></div>
     <div class="stat-row"><span class="stat-label">平均值</span>
-      <span class="stat-val mid">${(stats.avg_db||0).toFixed(1)} dB</span></div>
+      <span class="stat-val mid">${(result.mean_db||0).toFixed(1)} dB</span></div>
     <div class="stat-row"><span class="stat-label">最小值</span>
-      <span class="stat-val low">${(stats.min_db||0).toFixed(1)} dB</span></div>
+      <span class="stat-val low">${(result.min_db||0).toFixed(1)} dB</span></div>
     <div class="stat-row"><span class="stat-label">格点数</span>
-      <span class="stat-val">${result.points?.length ?? 0}</span></div>`;
+      <span class="stat-val">${npts}</span></div>`;
 }
 </script>
 </body>
