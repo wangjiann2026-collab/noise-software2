@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use nalgebra::Point3;
 
 use noise_data::{

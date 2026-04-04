@@ -347,7 +347,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
         <div id="add-note" class="note">请先选择场景</div>
       </div>
 
-      <!-- 命令输入卡片（动态，Phase 20D-E 填充） -->
+      <!-- 命令输入卡片（变换 & 折线命令） -->
       <div class="card" id="card-cmd" style="display:none">
         <div class="card-title" id="cmd-title">命令</div>
         <div id="cmd-body"></div>
@@ -402,7 +402,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   <span id="status-scenario" class="muted">未选场景</span>
 </div>
 
-<!-- Three.js CDN (Phase 20F) -->
+<!-- Three.js CDN for 3D rendering -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"
         onerror="window._threeLoadFailed=true"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"
@@ -869,7 +869,7 @@ const Renderer2D = {
   },
 };
 
-// ── 事件处理（Phase 20A：pan/zoom/坐标） ────────────────────────────────
+// ── 事件处理：pan / zoom / 坐标 ──────────────────────────────────────────
 let _spaceDown = false;
 let _panState  = null;   // { sx, sy, ox, oy }
 
@@ -883,7 +883,7 @@ function initCanvasEvents(canvas) {
 
   // 鼠标按下
   canvas.addEventListener('mousedown', e => {
-    // Phase 20B 工具逻辑在此扩展
+    // Tool-specific logic handled below
     const isPan = e.button === 1 || (e.button === 0 && _spaceDown)
                   || APP.tool.mode === 'pan';
     if (isPan && e.button !== 2) {
