@@ -972,7 +972,210 @@ function setActiveTool(mode) {
   }
 }
 
-// ── 视图切换（Phase 20F 填充 3D 逻辑） ──────────────────────────────────
+// ── SceneRenderer3D (R3D) ─────────────────────────────────────────────────
+const R3D = {
+  renderer: null, scene: null, camera: null, controls: null,
+  _rafId: null, _running: false, _initialized: false,
+
+  init() {
+    if (this._initialized) return true;
+    if (typeof THREE === 'undefined') return false;
+    const canvas = document.getElementById('canvas-3d');
+    const W = canvas.offsetWidth || 800, H = canvas.offsetHeight || 600;
+
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setSize(W, H);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.setClearColor(0x0a0e14, 1);
+
+    this.scene = new THREE.Scene();
+    this.scene.fog = new THREE.FogExp2(0x0a0e14, 0.003);
+
+    this.camera = new THREE.PerspectiveCamera(50, W / H, 0.5, 20000);
+    this.camera.position.set(0, 300, 400);
+    this.camera.lookAt(0, 0, 0);
+
+    // Lights
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+    sun.position.set(200, 400, 200);
+    sun.castShadow = true;
+    this.scene.add(sun);
+    const fill = new THREE.DirectionalLight(0x8888ff, 0.25);
+    fill.position.set(-200, 100, -100);
+    this.scene.add(fill);
+
+    // Ground plane
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(4000, 4000),
+      new THREE.MeshLambertMaterial({ color: 0x111a11 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+
+    // Grid
+    const grid = new THREE.GridHelper(2000, 200, 0x1c2128, 0x1c2128);
+    this.scene.add(grid);
+
+    // OrbitControls
+    const OC = THREE.OrbitControls || (window.THREE && THREE.OrbitControls);
+    if (OC) {
+      this.controls = new OC(this.camera, canvas);
+      this.controls.enableDamping   = true;
+      this.controls.dampingFactor   = 0.08;
+      this.controls.screenSpacePanning = true;
+      this.controls.maxPolarAngle   = Math.PI * 0.48;
+      this.controls.minDistance     = 5;
+      this.controls.maxDistance     = 8000;
+    }
+
+    this._initialized = true;
+    return true;
+  },
+
+  sync() {
+    if (!this._initialized && !this.init()) return;
+    // Remove previous objects group
+    const old = this.scene.getObjectByName('noise_objs');
+    if (old) this.scene.remove(old);
+
+    const group = new THREE.Group();
+    group.name = 'noise_objs';
+    const mat = {
+      ps:      new THREE.MeshLambertMaterial({ color: 0x1f6feb }),
+      road:    new THREE.MeshLambertMaterial({ color: 0x3fb950 }),
+      barrier: new THREE.MeshLambertMaterial({ color: 0xd18616 }),
+      pole:    new THREE.MeshLambertMaterial({ color: 0x484f58 }),
+    };
+
+    APP.objects.forEach(obj => {
+      // Three.js coord: (wx, elevation, -wy)
+      if (obj.object_type === 'point_source' && obj.position) {
+        const [wx, wy, wz] = obj.position;
+        const elev = wz || 1.5;
+        // Sphere coloured by Lw (blue 60 dB → red 100 dB)
+        const t = Math.max(0, Math.min(1, ((obj.lw_db || 80) - 60) / 40));
+        const col = new THREE.Color().setHSL(0.67 * (1 - t), 0.9, 0.55);
+        const sphere = new THREE.Mesh(
+          new THREE.SphereGeometry(1.8, 10, 10),
+          new THREE.MeshLambertMaterial({ color: col })
+        );
+        sphere.position.set(wx, elev, -wy);
+        sphere.castShadow = true;
+        group.add(sphere);
+        // Pole
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.25, 0.25, elev, 6),
+          mat.pole
+        );
+        pole.position.set(wx, elev / 2, -wy);
+        group.add(pole);
+
+      } else if (obj.object_type === 'road_source' && obj.vertices?.length >= 2) {
+        const v = obj.vertices;
+        for (let i = 0; i < v.length - 1; i++) {
+          const [ax, ay, az=0] = v[i], [bx, by, bz=0] = v[i+1];
+          const dx = bx-ax, dy = -(by-ay), dz = az;
+          const len = Math.sqrt(dx*dx + dy*dy);
+          if (len < 0.01) continue;
+          const box = new THREE.Mesh(
+            new THREE.BoxGeometry(len, 0.3, 1.2),
+            mat.road
+          );
+          box.position.set((ax+bx)/2, 0.15, -(ay+by)/2);
+          box.rotation.y = Math.atan2(dy, dx);
+          group.add(box);
+        }
+
+      } else if (obj.object_type === 'barrier' && obj.vertices?.length >= 2) {
+        const v   = obj.vertices;
+        const h   = obj.height_m || 3.0;
+        for (let i = 0; i < v.length - 1; i++) {
+          const [ax, ay] = v[i], [bx, by] = v[i+1];
+          const dx = bx-ax, dy = -(by-ay);
+          const len = Math.sqrt(dx*dx + dy*dy);
+          if (len < 0.01) continue;
+          const box = new THREE.Mesh(
+            new THREE.BoxGeometry(len, h, 0.45),
+            mat.barrier
+          );
+          box.position.set((ax+bx)/2, h/2, -(ay+by)/2);
+          box.rotation.y = Math.atan2(dy, dx);
+          box.castShadow  = true;
+          box.receiveShadow = true;
+          group.add(box);
+        }
+      }
+    });
+    this.scene.add(group);
+    this._fitCamera();
+  },
+
+  _fitCamera() {
+    const allPts = APP.objects.flatMap(o => {
+      if (o.object_type === 'point_source' && o.position) return [[o.position[0], -o.position[1]]];
+      return (o.vertices || []).map(v => [v[0], -v[1]]);
+    });
+    if (!allPts.length) return;
+    const xs = allPts.map(p => p[0]), zs = allPts.map(p => p[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+    const span = Math.max(
+      Math.max(...xs) - Math.min(...xs),
+      Math.max(...zs) - Math.min(...zs),
+      100
+    );
+    this.camera.position.set(cx, span * 0.7, cz + span * 0.9);
+    this.camera.lookAt(cx, 0, cz);
+    if (this.controls) {
+      this.controls.target.set(cx, 0, cz);
+      this.controls.update();
+    }
+  },
+
+  start() {
+    if (!this.init()) {
+      // Three.js unavailable — show text fallback on the 2D canvas context
+      const canvas = document.getElementById('canvas-3d');
+      const W = canvas.offsetWidth || 800, H = canvas.offsetHeight || 600;
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0a0e14'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#484f58'; ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Three.js 未加载（网络离线？）— 3D 渲染不可用', W / 2, H / 2);
+      return;
+    }
+    this.sync();
+    this._running = true;
+    const tick = () => {
+      if (!this._running) return;
+      this._rafId = requestAnimationFrame(tick);
+      if (this.controls) this.controls.update();
+      this.renderer.render(this.scene, this.camera);
+    };
+    tick();
+  },
+
+  stop() {
+    this._running = false;
+    if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
+  },
+
+  resize() {
+    if (!this._initialized || !this.renderer) return;
+    const canvas = document.getElementById('canvas-3d');
+    const W = canvas.offsetWidth, H = canvas.offsetHeight;
+    if (!W || !H) return;
+    this.renderer.setSize(W, H);
+    this.camera.aspect = W / H;
+    this.camera.updateProjectionMatrix();
+  },
+};
+
+// ── 视图切换 ──────────────────────────────────────────────────────────────
 function switchView(v) {
   APP.activeView = v;
   document.getElementById('canvas-2d').style.display = v === '2d' ? 'block' : 'none';
@@ -981,13 +1184,10 @@ function switchView(v) {
     b.classList.toggle('active', b.dataset.view === v);
   });
   if (v === '2d') {
+    R3D.stop();
     vp.requestRedraw();
-    // Phase 20F: R3D.stop()
   } else {
-    // Phase 20F: R3D.sync(); R3D.start();
-    if (window._threeLoadFailed) {
-      document.getElementById('canvas-3d').style.background = '#0a0e14';
-    }
+    R3D.start();
   }
 }
 
@@ -1849,6 +2049,8 @@ async function loadObjects() {
     APP.selectedIds = new Set();
     vp.fitToObjects(APP.objects, APP.calcResult);
     vp.requestRedraw();
+    // Keep 3D scene in sync (only rebuild if 3D already initialized)
+    if (R3D._initialized) R3D.sync();
   } catch(err) {
     showStatus('加载对象失败: ' + err, 'err');
   }
@@ -1887,7 +2089,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Resize
   window.addEventListener('resize', () => {
     vp.resize();
-    // Phase 20F: R3D.resize()
+    R3D.resize();
   });
 
   drawLegend();
@@ -1963,7 +2165,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadProjects();
-  showStatus('Phase 20E 加载完成 — 折线命令 (Trim/Break/Join/Offset/Extend) 可用', 'ready');
+  showStatus('Phase 20F 加载完成 — 3D 渲染可用，点击工具栏 [3D] 切换', 'ready');
 });
 
 function _updateResultsPanel(result) {
