@@ -720,34 +720,60 @@ const Renderer2D = {
   _drawHeatmap() {
     const res = APP.calcResult;
     if (!res || !res.levels?.length || APP.heatmapOpacity <= 0) return;
-    const { ctx } = this.vp;
+    const { ctx, canvas } = this.vp;
     const { levels, nx, ny, xmin, ymin, cellsize, min_db, max_db } = res;
     const minDb = min_db ?? 35;
     const maxDb = max_db ?? 75;
     const range = Math.max(maxDb - minDb, 1);
+    const alpha = Math.round(APP.heatmapOpacity * 255);
 
-    // Pixel size of one grid cell
-    const pa = this.vp.worldToCanvas(0, 0);
-    const pb = this.vp.worldToCanvas(cellsize, cellsize);
-    const cw = Math.max(1, Math.ceil(Math.abs(pb.x - pa.x) + 0.5));
-    const ch = Math.max(1, Math.ceil(Math.abs(pb.y - pa.y) + 0.5));
+    // World coords of canvas corners
+    const W = canvas.width, H = canvas.height;
+    const tl = this.vp.canvasToWorld(0, 0);
+    const br = this.vp.canvasToWorld(W, H);
 
-    ctx.save();
-    ctx.globalAlpha = APP.heatmapOpacity;
-    for (let iy = 0; iy < ny; iy++) {
-      for (let ix = 0; ix < nx; ix++) {
+    // Which grid columns/rows are visible?
+    const ixMin = Math.max(0,    Math.floor((tl.x - xmin) / cellsize));
+    const ixMax = Math.min(nx-1, Math.ceil ((br.x - xmin) / cellsize));
+    const iyMin = Math.max(0,    Math.floor((br.y - ymin) / cellsize));
+    const iyMax = Math.min(ny-1, Math.ceil ((tl.y - ymin) / cellsize));
+    if (ixMin > ixMax || iyMin > iyMax) return;
+
+    // Build an ImageData covering exactly the visible grid region
+    const pa = this.vp.worldToCanvas(xmin + ixMin * cellsize, ymin + (iyMax+1) * cellsize);
+    const pb = this.vp.worldToCanvas(xmin + (ixMax+1) * cellsize, ymin + iyMin * cellsize);
+    const imgW = Math.max(1, Math.round(pb.x - pa.x));
+    const imgH = Math.max(1, Math.round(pb.y - pa.y));
+    const cellPxW = imgW / (ixMax - ixMin + 1);
+    const cellPxH = imgH / (iyMax - iyMin + 1);
+
+    const imgData = ctx.createImageData(imgW, imgH);
+    const d = imgData.data;
+
+    for (let iy = iyMin; iy <= iyMax; iy++) {
+      for (let ix = ixMin; ix <= ixMax; ix++) {
         const db = levels[iy * nx + ix];
         if (!isFinite(db)) continue;
         const t = Math.max(0, Math.min(1, (db - minDb) / range));
         const [r, g, b] = dbToRGB(t);
-        const wx = xmin + (ix + 0.5) * cellsize;
-        const wy = ymin + (iy + 0.5) * cellsize;
-        const p  = this.vp.worldToCanvas(wx - cellsize / 2, wy + cellsize / 2);
-        ctx.fillStyle = `rgb(${r},${g},${b})`;
-        ctx.fillRect(p.x, p.y, cw, ch);
+
+        // Fill the rectangle of pixels this cell occupies in the ImageData
+        const pxX0 = Math.round((ix - ixMin) * cellPxW);
+        const pxY0 = Math.round((iy - iyMin) * cellPxH);  // grid Y=0 is bottom
+        const pxX1 = Math.round((ix - ixMin + 1) * cellPxW);
+        const pxY1 = Math.round((iy - iyMin + 1) * cellPxH);
+        // ImageData rows run top→bottom; grid Y increases upward → flip
+        const rowTop    = imgH - pxY1;
+        const rowBottom = imgH - pxY0;
+        for (let py = rowTop; py < rowBottom; py++) {
+          for (let px = pxX0; px < pxX1; px++) {
+            const i = (py * imgW + px) * 4;
+            d[i]   = r; d[i+1] = g; d[i+2] = b; d[i+3] = alpha;
+          }
+        }
       }
     }
-    ctx.restore();
+    ctx.putImageData(imgData, Math.round(pa.x), Math.round(pa.y));
   },
 
   _drawObjects() {
@@ -2272,23 +2298,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const estNx = Math.ceil((bxmax - bxmin) / res);
     const estNy = Math.ceil((bymax - bymin) / res);
     const estCells = estNx * estNy;
-    if (estCells > 400_000) {
-      showStatus(`格点数 ${estNx}×${estNy}=${estCells.toLocaleString()} 过多，请提高分辨率（建议 ≥ 5 m）或缩小范围`, 'err');
+    if (estCells > 1_000_000_000) {
+      showStatus(`格点数 ${estNx}×${estNy}=${estCells.toLocaleString()} 超过10亿上限，请缩小范围或降低分辨率`, 'err');
       return;
     }
-    showStatus(`计算中… ${estNx}×${estNy}=${estCells.toLocaleString()} 格点`, 'run');
+    const cellsM = (estCells / 1e6).toFixed(1);
+    if (estCells > 100_000_000) showStatus(`大型计算 ${estNx}×${estNy} (${cellsM}M 格点)，需要大量内存和时间…`, 'run');
+    else if (estCells > 10_000_000) showStatus(`计算中… ${estNx}×${estNy} (${cellsM}M 格点)`, 'run');
+    else showStatus(`计算中… ${estNx}×${estNy}=${estCells.toLocaleString()} 格点`, 'run');
     try {
-      APP.calcResult = await invoke('run_calculation', {
+      const raw = await invoke('run_calculation', {
         scenarioId: APP.currentScenarioId, metric,
         resolutionM: res,
         xmin: bxmin, ymin: bymin, xmax: bxmax, ymax: bymax,
       });
+      // Large grid: levels stored in binary file — load via Tauri FS
+      if (raw.levels_file && (!raw.levels || !raw.levels.length)) {
+        showStatus('加载格点数据…', 'run');
+        const bytes = await window.__TAURI__.fs.readBinaryFile(raw.levels_file);
+        raw.levels = new Float32Array(bytes.buffer);
+      }
+      APP.calcResult = raw;
       document.getElementById('map-overlay').classList.add('hidden');
       vp.fitToObjects(APP.objects, APP.calcResult);
       vp.requestRedraw();
       if (APP.activeView === '3d' && R3D._initialized) R3D.sync();
       const npts = (APP.calcResult.nx || 0) * (APP.calcResult.ny || 0);
-      showStatus(`计算完成 — ${npts} 个格点`, 'ready');
+      showStatus(`计算完成 — ${npts.toLocaleString()} 格点`, 'ready');
       _updateResultsPanel(APP.calcResult);
     } catch(err) { showStatus('计算失败: ' + err, 'err'); }
   }

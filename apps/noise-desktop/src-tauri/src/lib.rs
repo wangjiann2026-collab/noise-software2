@@ -92,6 +92,10 @@ pub struct ObjectInfo {
 }
 
 /// Result returned after a grid calculation.
+///
+/// For large grids (> `LARGE_GRID_PERSIST_THRESHOLD` cells) `levels` is
+/// empty and `levels_file` contains the path to a raw little-endian f32
+/// binary file written to the system temp directory.
 #[derive(Debug, Serialize, Clone)]
 pub struct CalcResult {
     pub calc_id: i64,
@@ -101,7 +105,10 @@ pub struct CalcResult {
     pub xmin: f64,
     pub ymin: f64,
     pub cellsize: f64,
+    /// Inline levels – populated for grids ≤ LARGE_GRID_PERSIST_THRESHOLD cells.
     pub levels: Vec<f32>,
+    /// Path to raw f32-LE binary file – populated for larger grids.
+    pub levels_file: Option<String>,
     pub mean_db: f64,
     pub max_db: f64,
     pub min_db: f64,
@@ -325,10 +332,19 @@ pub fn delete_object(
         .map_err(|e| e.to_string())
 }
 
+/// Grids larger than this are written to a temp binary file rather than
+/// stored inline in SQLite, to keep DB writes practical.
+const LARGE_GRID_PERSIST_THRESHOLD: usize = 50_000_000; // 50 M cells ≈ 7071×7071
+
+/// Maximum supported grid size (1 billion cells).
+const MAX_GRID_CELLS: usize = 1_000_000_000;
+
 /// Run a horizontal grid calculation for a scenario and persist the result.
 ///
-/// Heavy computation is offloaded to a blocking thread so the UI stays
-/// responsive. Grid cell count is capped at 400 000 (≈ 632 × 632).
+/// Heavy computation runs in a `spawn_blocking` thread – the UI stays
+/// responsive for any grid size.  The hard limit is 1 billion cells.
+/// For grids > 50 M cells the levels are written to a temp binary file
+/// (raw little-endian f32) instead of being stored in SQLite.
 #[tauri::command]
 pub async fn run_calculation(
     state: State<'_, AppState>,
@@ -349,11 +365,10 @@ pub async fn run_calculation(
     if nx == 0 || ny == 0 {
         return Err("grid extent produces a zero-sized grid".into());
     }
-    const MAX_CELLS: usize = 400_000;
-    if nx * ny > MAX_CELLS {
+    let n_cells = nx.checked_mul(ny).unwrap_or(usize::MAX);
+    if n_cells > MAX_GRID_CELLS {
         return Err(format!(
-            "格点数 {nx}×{ny}={} 超过上限 {MAX_CELLS}。请降低分辨率（建议 ≥ 5 m）或缩小范围。",
-            nx * ny
+            "格点数 {nx}×{ny}={n_cells} 超过硬件上限 10 亿，请缩小范围或降低分辨率"
         ));
     }
 
@@ -423,17 +438,49 @@ pub async fn run_calculation(
     .map_err(|e| e.to_string())?;
 
     // ── Persist result ────────────────────────────────────────────────────────
-    let data = serde_json::json!({
-        "nx": nx, "ny": ny,
-        "xmin": xmin, "ymin": ymin,
-        "cellsize": resolution_m,
-        "levels": levels,
-    });
-    let calc_id = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
-        CalculationRepository::new(db.connection())
-            .insert(&scenario_id, "horizontal", &metric, &data)
-            .map_err(|e| e.to_string())?
+    // For large grids, write a raw f32-LE binary file instead of a JSON blob.
+    let large_grid = levels.len() > LARGE_GRID_PERSIST_THRESHOLD;
+    let levels_file: Option<String>;
+    let calc_id: i64;
+
+    if large_grid {
+        // Write binary temp file: nx*ny × 4 bytes, little-endian f32
+        let tmp_path = std::env::temp_dir()
+            .join(format!("noisecad_{scenario_id}_{metric}.bin"));
+        let bytes: Vec<u8> = levels.iter()
+            .flat_map(|&f| f.to_le_bytes())
+            .collect();
+        std::fs::write(&tmp_path, bytes)
+            .map_err(|e| format!("failed to write levels file: {e}"))?;
+        levels_file = Some(tmp_path.to_string_lossy().into_owned());
+
+        // Store only metadata in DB (no inline levels)
+        let data = serde_json::json!({
+            "nx": nx, "ny": ny,
+            "xmin": xmin, "ymin": ymin,
+            "cellsize": resolution_m,
+            "levels_file": levels_file,
+        });
+        calc_id = {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            CalculationRepository::new(db.connection())
+                .insert(&scenario_id, "horizontal", &metric, &data)
+                .map_err(|e| e.to_string())?
+        };
+    } else {
+        levels_file = None;
+        let data = serde_json::json!({
+            "nx": nx, "ny": ny,
+            "xmin": xmin, "ymin": ymin,
+            "cellsize": resolution_m,
+            "levels": levels,
+        });
+        calc_id = {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            CalculationRepository::new(db.connection())
+                .insert(&scenario_id, "horizontal", &metric, &data)
+                .map_err(|e| e.to_string())?
+        };
     };
 
     // ── Statistics ────────────────────────────────────────────────────────────
@@ -452,7 +499,8 @@ pub async fn run_calculation(
     Ok(CalcResult {
         calc_id, metric, nx, ny, xmin, ymin,
         cellsize: resolution_m,
-        levels,
+        levels: if large_grid { vec![] } else { levels },
+        levels_file,
         mean_db: (mean_db * 10.0).round() / 10.0,
         max_db:  (max_db  * 10.0).round() / 10.0,
         min_db:  (min_db  * 10.0).round() / 10.0,
