@@ -2354,11 +2354,12 @@ document.addEventListener('DOMContentLoaded', () => {
         resolutionM: res,
         xmin: bxmin, ymin: bymin, xmax: bxmax, ymax: bymax,
       });
-      // Large grid: levels stored in binary file — load via Tauri FS
+      // Large grid: levels stored in binary file — load via Tauri FS (v2 API)
       if (raw.levels_file && (!raw.levels || !raw.levels.length)) {
         showStatus('加载格点数据…', 'run');
-        const bytes = await window.__TAURI__.fs.readBinaryFile(raw.levels_file);
-        raw.levels = new Float32Array(bytes.buffer);
+        // Tauri v2: readFile returns Uint8Array; create Float32Array view
+        const bytes = await window.__TAURI__.fs.readFile(raw.levels_file);
+        raw.levels = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >>> 2);
       }
       APP.calcResult = raw;
       document.getElementById('map-overlay').classList.add('hidden');
@@ -2438,7 +2439,8 @@ function _updateSelectionCard() {
     <div class="stat-row">
       <span class="stat-label">声源高 (m)</span>
       <input id="prop-sh" type="number" class="prop-input" value="${(obj.source_height_m||0.05).toFixed(2)}" min="0" step="0.05">
-    </div>`;
+    </div>
+    <div class="stat-row"><span class="stat-label">采样间距 (m)</span><span class="stat-val">${(obj.sample_spacing_m||5).toFixed(0)}</span></div>`;
   } else if (obj.object_type === 'barrier' && obj.vertices?.length) {
     rows += `<div class="stat-row"><span class="stat-label">顶点数</span><span class="stat-val">${obj.vertices.length}</span></div>`;
     let len = 0;

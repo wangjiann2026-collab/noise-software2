@@ -89,6 +89,8 @@ pub struct ObjectInfo {
     pub height_m: Option<f64>,
     /// Road source emission height above ground (m).
     pub source_height_m: Option<f64>,
+    /// Road source polyline discretisation spacing (m).
+    pub sample_spacing_m: Option<f64>,
 }
 
 /// Result returned after a grid calculation.
@@ -282,10 +284,11 @@ pub fn list_objects(
     Ok(objects
         .into_iter()
         .map(|(row_id, obj)| {
-            let (position, lw_db, vertices, height_m, source_height_m) = match &obj {
+            let (position, lw_db, vertices, height_m, source_height_m, sample_spacing_m) = match &obj {
                 SceneObject::PointSource(ps) => (
                     Some([ps.position.x, ps.position.y, ps.position.z]),
                     Some(ps.lw_db[0]),
+                    None,
                     None,
                     None,
                     None,
@@ -296,6 +299,7 @@ pub fn list_objects(
                     Some(rs.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()),
                     None,
                     Some(rs.source_height_m),
+                    Some(rs.sample_spacing_m),
                 ),
                 SceneObject::Barrier(b) => (
                     None,
@@ -303,8 +307,9 @@ pub fn list_objects(
                     Some(b.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()),
                     Some(b.height_m),
                     None,
+                    None,
                 ),
-                _ => (None, None, None, None, None),
+                _ => (None, None, None, None, None, None),
             };
             ObjectInfo {
                 row_id,
@@ -315,6 +320,7 @@ pub fn list_objects(
                 vertices,
                 height_m,
                 source_height_m,
+                sample_spacing_m,
             }
         })
         .collect())
@@ -541,14 +547,19 @@ pub fn export_file(
     let xmin = cr.data["xmin"].as_f64().unwrap_or(0.0);
     let ymin = cr.data["ymin"].as_f64().unwrap_or(0.0);
     let cellsize = cr.data["cellsize"].as_f64().unwrap_or(10.0);
-    let levels: Vec<f32> = cr.data["levels"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_f64().map(|f| f as f32))
-                .collect()
-        })
-        .unwrap_or_default();
+
+    // Levels: inline JSON array (small grids) or raw f32-LE binary (large grids).
+    let levels: Vec<f32> = if let Some(arr) = cr.data["levels"].as_array() {
+        arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect()
+    } else if let Some(path) = cr.data["levels_file"].as_str() {
+        let bytes = std::fs::read(path)
+            .map_err(|e| format!("cannot read levels file {path}: {e}"))?;
+        bytes.chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let view = GridView {
         levels,
@@ -630,7 +641,11 @@ pub fn update_object_props(
         SceneObject::PointSource(ps) => {
             if let Some(lw) = lw_db {
                 ps.lw_db = [lw; 8];
-                ps.lwa_db = lw;
+                // Recompute A-weighted total from updated per-band levels.
+                const A_WEIGHTS: [f64; 8] = [-26.2, -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1];
+                ps.lwa_db = 10.0 * ps.lw_db.iter().zip(A_WEIGHTS.iter())
+                    .map(|(&b, &a)| 10f64.powf((b + a) / 10.0))
+                    .sum::<f64>().log10();
             }
         }
         SceneObject::RoadSource(rs) => {
