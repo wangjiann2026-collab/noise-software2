@@ -150,6 +150,7 @@ pub async fn run(args: CalcArgs) -> anyhow::Result<()> {
         g_receiver: 0.0,
         g_middle: 0.0,
         max_source_range_m: None,
+        energy_floor_db: f64::NEG_INFINITY,
     };
 
     let is_multi_period = matches!(args.metric.as_str(), "Lden" | "Ldn");

@@ -159,6 +159,7 @@ pub async fn submit_calculate(
                 g_receiver: 0.5,
                 g_middle: 0.5,
                 max_source_range_m: None,
+                energy_floor_db: f64::NEG_INFINITY,
             };
 
             // For Lden/Ldn use the multi-period calculator (EU 2002/49/EC).

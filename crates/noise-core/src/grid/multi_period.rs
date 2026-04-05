@@ -29,6 +29,7 @@
 //! assert!(!grid.results.is_empty());
 //! ```
 
+use rayon::prelude::*;
 use super::{BarrierSpec, CalculatorConfig, GridCalculator, HorizontalGrid, SourceSpec};
 
 // ─── Multi-period configuration ──────────────────────────────────────────────
@@ -143,27 +144,38 @@ impl MultiPeriodGridCalculator {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /// Run day / evening / night and return [day_levels, evening_levels, night_levels].
+    /// Run day / evening / night concurrently and return
+    /// `[day_levels, evening_levels, night_levels]`.
+    ///
+    /// The three periods are independent and are dispatched in parallel via
+    /// `rayon::join`.  Each period already parallelises over receivers with
+    /// `par_iter`; Rayon's work-stealing scheduler handles the nesting.
     fn run_three_periods(
         &self,
         grid: &HorizontalGrid,
         sources: &[SourceSpec],
         barriers: &[BarrierSpec],
     ) -> [Vec<f32>; 3] {
-        let day_sources = sources.to_vec();
+        let day_sources     = sources.to_vec();
         let evening_sources = apply_offset(sources, self.period_config.evening_source_offset_db);
         let night_sources   = apply_offset(sources, self.period_config.night_source_offset_db);
 
-        let run = |srcs: Vec<SourceSpec>| -> Vec<f32> {
+        let run = |srcs: &[SourceSpec]| -> Vec<f32> {
             let mut g = grid.clone();
             GridCalculator::new(self.calc_config.clone())
-                .calculate(&mut g, &srcs, barriers, None);
+                .calculate(&mut g, srcs, barriers, None);
             g.results
         };
 
-        let day_levels     = run(day_sources);
-        let evening_levels = run(evening_sources);
-        let night_levels   = run(night_sources);
+        // Dispatch all three periods in parallel.
+        let ((day_levels, evening_levels), night_levels) = rayon::join(
+            || rayon::join(
+                || run(&day_sources),
+                || run(&evening_sources),
+            ),
+            || run(&night_sources),
+        );
+
         [day_levels, evening_levels, night_levels]
     }
 }
