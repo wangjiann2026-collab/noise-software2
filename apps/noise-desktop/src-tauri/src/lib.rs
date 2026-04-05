@@ -423,11 +423,12 @@ pub async fn run_calculation(
             propagation: PropagationConfig::default(),
             g_receiver: 0.5,
             g_middle: 0.5,
-            // Spatial hash culling: skip sources > 2 km away per receiver.
-            max_source_range_m: Some(2000.0),
-            // Pre-reject sources whose geometric estimate is below 0 dBA.
-            // Introduced error < 0.05 dBA — within 0.1 dBA target.
-            energy_floor_db: 0.0,
+            // No hard spatial cutoff: the geometric pre-reject handles far-field
+            // performance automatically without creating an artificial sharp edge.
+            max_source_range_m: None,
+            // Disable pre-reject floor so far-field cells decay smoothly to the
+            // display minimum rather than snapping to transparent at a fixed radius.
+            energy_floor_db: f64::NEG_INFINITY,
         };
         match metric.as_str() {
             "Lden" => {
