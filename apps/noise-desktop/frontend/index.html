@@ -505,13 +505,18 @@ function showInputModal(title, defaultVal = '') {
 }
 
 // ── 颜色工具 ────────────────────────────────────────────────────────────
+// Professional noise-map palette (ISO 1996-2 inspired):
+//   deep blue → sky blue → cyan → green → yellow → orange → red → magenta
+// 8 stops give clear visual banding per 5 dB step across the 35–75 dB range.
 const COLOR_STOPS = [
-  [0.0,  [0,   0,   200]],
-  [0.2,  [0,   200, 220]],
-  [0.4,  [0,   200, 0  ]],
-  [0.6,  [255, 230, 0  ]],
-  [0.8,  [255, 100, 0  ]],
-  [1.0,  [255, 0,   0  ]],
+  [0.00, [  0,  40, 160]],   // ~35 dB  deep blue
+  [0.14, [ 20, 130, 255]],   // ~40 dB  sky blue
+  [0.29, [ 20, 210, 210]],   // ~45 dB  cyan
+  [0.43, [ 50, 190,  80]],   // ~50 dB  green
+  [0.57, [200, 220,   0]],   // ~55 dB  yellow-green
+  [0.71, [255, 165,   0]],   // ~60 dB  amber
+  [0.86, [240,  40,  20]],   // ~68 dB  red
+  [1.00, [160,   0, 100]],   // ~75+ dB dark magenta
 ];
 function dbToRGB(t) {
   t = Math.max(0, Math.min(1, t));
@@ -1034,10 +1039,19 @@ function initCanvasEvents(canvas) {
       vp.requestRedraw();
     }
     TC.onMouseMove(e);
-    // 状态栏坐标
+    // 状态栏坐标 + 网格值
     const w = vp.canvasToWorld(e.offsetX, e.offsetY);
-    document.getElementById('status-coords').textContent =
-      `X: ${w.x.toFixed(1)}  Y: ${w.y.toFixed(1)}`;
+    let coordStr = `X: ${w.x.toFixed(1)}  Y: ${w.y.toFixed(1)}`;
+    const res = APP.calcResult;
+    if (res && res.levels?.length) {
+      const ix = Math.floor((w.x - res.xmin) / res.cellsize);
+      const iy = Math.floor((w.y - res.ymin) / res.cellsize);
+      if (ix >= 0 && ix < res.nx && iy >= 0 && iy < res.ny) {
+        const db = res.levels[iy * res.nx + ix];
+        if (isFinite(db)) coordStr += `  |  ${db.toFixed(1)} dB(A)`;
+      }
+    }
+    document.getElementById('status-coords').textContent = coordStr;
   });
 
   // 鼠标抬起
@@ -1365,7 +1379,7 @@ function switchView(v) {
 }
 
 // ── 色阶图例 ─────────────────────────────────────────────────────────────
-function drawLegend() {
+function drawLegend(minDb, maxDb) {
   const canvas = document.getElementById('legend-canvas');
   const ctx = canvas.getContext('2d');
   const W = canvas.offsetWidth || 200, H = 14;
@@ -1374,6 +1388,21 @@ function drawLegend() {
   COLOR_STOPS.forEach(([t, [r,g,b]]) => grad.addColorStop(t, `rgb(${r},${g},${b})`));
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
+
+  // Update tick labels dynamically when min/max are known
+  if (minDb != null && maxDb != null) {
+    const ticks = document.getElementById('legend-ticks');
+    const range = maxDb - minDb;
+    const step = range <= 10 ? 1 : range <= 20 ? 2 : range <= 40 ? 5 : 10;
+    const lo = Math.ceil(minDb / step) * step;
+    const hi = Math.floor(maxDb / step) * step;
+    const labels = [];
+    for (let v = lo; v <= hi; v += step) labels.push(v);
+    // always show min and max
+    if (!labels.length || labels[0] > minDb) labels.unshift(Math.round(minDb));
+    if (labels[labels.length-1] < maxDb) labels.push(Math.round(maxDb) + '+');
+    ticks.innerHTML = labels.map(v => `<span>${v}</span>`).join('');
+  }
 }
 
 // ── 状态栏工具函数 ────────────────────────────────────────────────────────
@@ -2369,6 +2398,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const npts = (APP.calcResult.nx || 0) * (APP.calcResult.ny || 0);
       showStatus(`计算完成 — ${npts.toLocaleString()} 格点`, 'ready');
       _updateResultsPanel(APP.calcResult);
+      drawLegend(APP.calcResult.min_db, APP.calcResult.max_db);
     } catch(err) { showStatus('计算失败: ' + err, 'err'); }
   }
   document.getElementById('btn-run').addEventListener('click',  runCalc);

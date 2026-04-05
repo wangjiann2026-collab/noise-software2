@@ -13,8 +13,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::diffraction::{barrier_attenuation_db, BarrierPath, DiffractionEdge};
+use super::diffraction::{barrier_attenuation_db, BarrierPath};
 use super::ground_effect::{ground_attenuation_db, GroundPath, OCTAVE_BANDS};
+use crate::grid::calculator::BarrierSpec;
 use crate::simd::energy_sum_bands;
 use nalgebra::Point3;
 
@@ -99,6 +100,60 @@ impl AttenuationBreakdown {
     }
 }
 
+/// Find where the source→receiver path crosses the barrier segment p0→p1 in XY.
+/// Returns the 3D edge point at `height_m` if they cross within both segments.
+/// Falls back to the segment midpoint when the lines are nearly parallel
+/// (e.g. road running parallel to a noise wall — the receiver is directly
+/// beside the wall rather than behind it, so the midpoint is a reasonable proxy).
+fn barrier_crossing_xy(
+    source: &nalgebra::Point3<f64>,
+    receiver: &nalgebra::Point3<f64>,
+    p0: &nalgebra::Point3<f64>,
+    p1: &nalgebra::Point3<f64>,
+    height_m: f64,
+) -> Option<nalgebra::Point3<f64>> {
+    let (sx, sy) = (source.x, source.y);
+    let (rx, ry) = (receiver.x, receiver.y);
+    let (ax, ay) = (p0.x, p0.y);
+    let (bx, by) = (p1.x, p1.y);
+
+    let d1x = rx - sx;
+    let d1y = ry - sy;
+    let d2x = bx - ax;
+    let d2y = by - ay;
+
+    // 2-D cross product of the two direction vectors.
+    let cross = d1x * d2y - d1y * d2x;
+
+    if cross.abs() < 1e-9 {
+        // Lines are parallel — use midpoint as a reasonable proxy.
+        return Some(nalgebra::Point3::new(
+            (ax + bx) * 0.5,
+            (ay + by) * 0.5,
+            height_m,
+        ));
+    }
+
+    let dx = ax - sx;
+    let dy = ay - sy;
+
+    // Parameter along source→receiver ray: t ∈ [0,1] means crossing is between S and R.
+    let t = (dx * d2y - dy * d2x) / cross;
+    // Parameter along barrier segment: u ∈ [0,1] means crossing is on the barrier.
+    let u = (dx * d1y - dy * d1x) / cross;
+
+    if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&t) {
+        // Path doesn't intersect this barrier segment — no attenuation.
+        return None;
+    }
+
+    Some(nalgebra::Point3::new(
+        sx + t * d1x,
+        sy + t * d1y,
+        height_m,
+    ))
+}
+
 /// Full ISO 9613-2 propagation model.
 pub struct PropagationModel {
     pub config: PropagationConfig,
@@ -119,7 +174,7 @@ impl PropagationModel {
         source: &Point3<f64>,
         receiver: &Point3<f64>,
         ground: &GroundPath,
-        barriers: &[DiffractionEdge],
+        barriers: &[BarrierSpec],
         a_misc_db: Option<&[f64; 8]>,
     ) -> AttenuationBreakdown {
         let d = (receiver - source).norm().max(1.0);
@@ -154,18 +209,19 @@ impl PropagationModel {
         &self,
         source: &Point3<f64>,
         receiver: &Point3<f64>,
-        barriers: &[DiffractionEdge],
+        barriers: &[BarrierSpec],
     ) -> [f64; 8] {
         if barriers.is_empty() { return [0.0; 8]; }
-        // Select the barrier producing the highest insertion loss (conservative/dominant).
+        let c = self.speed_of_sound();
         let mut best = [0.0f64; 8];
-        for edge in barriers {
-            let path = BarrierPath {
-                source: *source,
-                receiver: *receiver,
-                edge: edge.clone(),
-                speed_of_sound: self.speed_of_sound(),
-            };
+        for b in barriers {
+            // Find where the source→receiver straight-line path crosses the
+            // barrier segment in the XY plane.  If the path does not cross
+            // (or is parallel), skip this barrier — it doesn't block this ray.
+            let Some(edge_pt) = barrier_crossing_xy(source, receiver, &b.p0, &b.p1, b.height_m)
+            else { continue };
+            let edge = super::diffraction::DiffractionEdge { point: edge_pt, height_m: b.height_m };
+            let path = BarrierPath { source: *source, receiver: *receiver, edge, speed_of_sound: c };
             let a = barrier_attenuation_db(&path);
             for i in 0..8 {
                 if a[i] > best[i] { best[i] = a[i]; }
@@ -290,8 +346,12 @@ mod tests {
         let g   = ground(0.5, 4.0, 100.0, 0.5);
         let lp_no_barrier = m.compute(&src, &rcv, &g, &[], None)
             .apply_to_lw(&flat_lw(100.0));
-        let edge = DiffractionEdge { point: Point3::new(50.0, 0.0, 6.0), height_m: 6.0 };
-        let lp_with_barrier = m.compute(&src, &rcv, &g, &[edge], None)
+        let barrier = crate::grid::calculator::BarrierSpec {
+            p0: Point3::new(50.0, -10.0, 0.0),
+            p1: Point3::new(50.0, 10.0, 0.0),
+            height_m: 6.0,
+        };
+        let lp_with_barrier = m.compute(&src, &rcv, &g, &[barrier], None)
             .apply_to_lw(&flat_lw(100.0));
         assert!(lp_with_barrier < lp_no_barrier,
             "barrier should reduce SPL: {lp_no_barrier:.1} → {lp_with_barrier:.1}");

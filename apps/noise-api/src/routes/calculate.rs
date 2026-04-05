@@ -6,7 +6,7 @@
 use axum::{Json, extract::{Path, State}, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use noise_core::{
-    engine::{PropagationConfig, diffraction::DiffractionEdge},
+    engine::PropagationConfig,
     grid::{BarrierSpec, CalculatorConfig, GridCalculator, HorizontalGrid, MultiPeriodConfig,
            MultiPeriodGridCalculator, SourceSpec},
 };
@@ -393,18 +393,16 @@ fn scene_object_to_sources(obj: &SceneObject, out: &mut Vec<SourceSpec>) {
 
 /// Append [`BarrierSpec`] entries for a single [`SceneObject`].
 ///
-/// Each segment of a `Barrier` polyline becomes one `BarrierSpec` whose
-/// diffracting edge is placed at the segment midpoint at `height_m`.
+/// Each segment of a `Barrier` polyline becomes one `BarrierSpec` storing
+/// the segment endpoints.  The actual diffraction edge point on the barrier
+/// is computed per propagation path in `propagation.rs`.
 fn scene_object_to_barriers(obj: &SceneObject, out: &mut Vec<BarrierSpec>) {
     if let SceneObject::Barrier(b) = obj {
         for seg in b.vertices.windows(2) {
-            let mid = Point3::new(
-                (seg[0].x + seg[1].x) * 0.5,
-                (seg[0].y + seg[1].y) * 0.5,
-                b.height_m,
-            );
             out.push(BarrierSpec {
-                edge: DiffractionEdge { point: mid, height_m: b.height_m },
+                p0: Point3::new(seg[0].x, seg[0].y, 0.0),
+                p1: Point3::new(seg[1].x, seg[1].y, 0.0),
+                height_m: b.height_m,
             });
         }
     }

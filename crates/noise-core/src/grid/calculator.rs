@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::engine::propagation::{PropagationConfig, PropagationModel};
-use crate::engine::diffraction::DiffractionEdge;
 use crate::engine::ground_effect::GroundPath;
 use crate::grid::horizontal::HorizontalGrid;
 use crate::spatial::SourceCuller;
@@ -36,8 +35,12 @@ pub struct SourceSpec {
 /// Barriers that attenuate propagation paths.
 #[derive(Debug, Clone)]
 pub struct BarrierSpec {
-    /// Diffracting edge geometry.
-    pub edge: DiffractionEdge,
+    /// Start of barrier wall segment (XY ground-plane coordinates, z ignored).
+    pub p0: nalgebra::Point3<f64>,
+    /// End of barrier wall segment.
+    pub p1: nalgebra::Point3<f64>,
+    /// Barrier top height above the ground plane (m).
+    pub height_m: f64,
 }
 
 /// Configuration for the grid calculator.
@@ -109,7 +112,6 @@ impl GridCalculator {
 
         // Collect receiver points eagerly (needed for parallel indexing).
         let receivers: Vec<Point3<f64>> = grid.receiver_points().collect();
-        let barrier_edges: Vec<DiffractionEdge> = barriers.iter().map(|b| b.edge.clone()).collect();
 
         // Build spatial index once for the whole grid when range culling is on.
         let culler = self.config.max_source_range_m.map(|range| {
@@ -128,9 +130,9 @@ impl GridCalculator {
                         let nearby = c.query(receiver);
                         let nearby_sources: Vec<&SourceSpec> =
                             nearby.iter().map(|&i| &sources[i]).collect();
-                        self.receiver_lp_slice(&model, receiver, &nearby_sources, &barrier_edges)
+                        self.receiver_lp_slice(&model, receiver, &nearby_sources, barriers)
                     }
-                    None => self.receiver_lp(&model, receiver, sources, &barrier_edges),
+                    None => self.receiver_lp(&model, receiver, sources, barriers),
                 };
                 let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                 if let Some(cb) = &progress {
@@ -151,9 +153,9 @@ impl GridCalculator {
         model: &PropagationModel,
         receiver: &Point3<f64>,
         sources: &[SourceSpec],
-        barrier_edges: &[DiffractionEdge],
+        barriers: &[BarrierSpec],
     ) -> f64 {
-        self.accumulate_lp(model, receiver, sources.iter().map(|s| s), barrier_edges)
+        self.accumulate_lp(model, receiver, sources.iter().map(|s| s), barriers)
     }
 
     /// Same as `receiver_lp` but takes a pre-filtered `&[&SourceSpec]` slice
@@ -163,9 +165,9 @@ impl GridCalculator {
         model: &PropagationModel,
         receiver: &Point3<f64>,
         sources: &[&SourceSpec],
-        barrier_edges: &[DiffractionEdge],
+        barriers: &[BarrierSpec],
     ) -> f64 {
-        self.accumulate_lp(model, receiver, sources.iter().copied(), barrier_edges)
+        self.accumulate_lp(model, receiver, sources.iter().copied(), barriers)
     }
 
     /// Core energy-summation loop.  Called by both `receiver_lp` variants.
@@ -183,7 +185,7 @@ impl GridCalculator {
         model: &PropagationModel,
         receiver: &Point3<f64>,
         sources: impl Iterator<Item = &'a SourceSpec>,
-        barrier_edges: &[DiffractionEdge],
+        barriers: &[BarrierSpec],
     ) -> f64 {
         let floor = self.config.energy_floor_db;
         let mut total_linear = 0.0f64;
@@ -213,7 +215,7 @@ impl GridCalculator {
                 g_receiver:        self.config.g_receiver,
                 g_middle:          self.config.g_middle,
             };
-            let breakdown = model.compute(&src.position, receiver, &ground, barrier_edges, None);
+            let breakdown = model.compute(&src.position, receiver, &ground, barriers, None);
             let lp = breakdown.apply_to_lw(&src.lw_db);
             if lp.is_finite() {
                 total_linear += 10f64.powf(lp / 10.0);
@@ -232,7 +234,6 @@ impl GridCalculator {
         barriers: &[BarrierSpec],
     ) -> Vec<f64> {
         let model = PropagationModel::new(self.config.propagation.clone());
-        let barrier_edges: Vec<DiffractionEdge> = barriers.iter().map(|b| b.edge.clone()).collect();
 
         let culler = self.config.max_source_range_m.map(|range| {
             let positions: Vec<Point3<f64>> = sources.iter().map(|s| s.position).collect();
@@ -245,9 +246,9 @@ impl GridCalculator {
                     let nearby = c.query(rcv);
                     let nearby_sources: Vec<&SourceSpec> =
                         nearby.iter().map(|&i| &sources[i]).collect();
-                    self.receiver_lp_slice(&model, rcv, &nearby_sources, &barrier_edges)
+                    self.receiver_lp_slice(&model, rcv, &nearby_sources, barriers)
                 }
-                None => self.receiver_lp(&model, rcv, sources, &barrier_edges),
+                None => self.receiver_lp(&model, rcv, sources, barriers),
             })
             .collect()
     }
@@ -333,10 +334,9 @@ mod tests {
         let rcv = Point3::new(100.0, 0.0, 4.0);
 
         let barrier = BarrierSpec {
-            edge: DiffractionEdge {
-                point: Point3::new(50.0, 0.0, 6.0),
-                height_m: 6.0,
-            },
+            p0: Point3::new(50.0, -10.0, 0.0),
+            p1: Point3::new(50.0, 10.0, 0.0),
+            height_m: 6.0,
         };
 
         let l_no_barrier = calc.calculate_points(&[rcv], &[src.clone()], &[])[0];
