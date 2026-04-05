@@ -1400,7 +1400,7 @@ const TC = {
         const sh = parseFloat(document.getElementById('add-sh').value) || 0.05;
         await invoke('add_road_source', {
           scenarioId: APP.currentScenarioId, name,
-          vertices: verts, sourceHeightM: sh,
+          vertices: verts, sourceHeightM: sh, sampleSpacingM: 1.0,
         });
       } else {
         const h = parseFloat(document.getElementById('add-height').value) || 3.0;
@@ -1838,7 +1838,7 @@ const PolylineCmdController = {
       if (obj.object_type === 'road_source') {
         await invoke('add_road_source', {
           scenarioId: APP.currentScenarioId, name: newName,
-          vertices: vertsB, sourceHeightM: obj.source_height_m || 0.05,
+          vertices: vertsB, sourceHeightM: obj.source_height_m || 0.05, sampleSpacingM: 1.0,
         });
       } else {
         await invoke('add_barrier', {
