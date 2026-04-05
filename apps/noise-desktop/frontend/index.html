@@ -665,6 +665,7 @@ const Renderer2D = {
     this._drawDraft();
     this._drawPreview();
     this._drawSelection();
+    this._drawBoxSel();
     this._drawAxisIndicator();
   },
 
@@ -1001,11 +1002,28 @@ const Renderer2D = {
     });
     ctx.restore();
   },
+
+  _drawBoxSel() {
+    if (!_boxSel) return;
+    const { ctx } = this.vp;
+    const { sx, sy, ex, ey } = _boxSel;
+    const x = Math.min(sx,ex), y = Math.min(sy,ey);
+    const w = Math.abs(ex-sx), h = Math.abs(ey-sy);
+    ctx.save();
+    ctx.strokeStyle = '#58a6ff';
+    ctx.lineWidth   = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.fillStyle   = 'rgba(31,111,235,0.08)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  },
 };
 
 // ── 事件处理：pan / zoom / 坐标 ──────────────────────────────────────────
 let _spaceDown = false;
 let _panState  = null;   // { sx, sy, ox, oy }
+let _boxSel    = null;   // { sx, sy, ex, ey } canvas pixels — rubber-band selection
 
 function initCanvasEvents(canvas) {
   // 滚轮缩放
@@ -1070,6 +1088,7 @@ function initCanvasEvents(canvas) {
   // 鼠标离开画布 — 清除 rubber-band
   canvas.addEventListener('mouseleave', () => {
     APP.tool.draftMouse = null;
+    _boxSel = null;
     vp.requestRedraw();
   });
 }
@@ -1120,7 +1139,7 @@ function setActiveTool(mode) {
   };
   document.getElementById('status-tool').textContent = names[mode] || mode;
   const hints = {
-    select:'点击选中对象，拖拽移动',
+    select:'点击选中对象，拖拽移动；空白区拖拽框选',
     point:'点击画布放置点声源',
     road:'单击添加顶点，双击完成，Esc取消',
     barrier:'单击添加顶点，双击完成，Esc取消',
@@ -1293,7 +1312,108 @@ const R3D = {
       }
     });
     this.scene.add(group);
+    this._syncHeatmap();
+    this._syncIsolines();
     this._fitCamera();
+  },
+
+  // ── 3D heatmap (textured ground plane) ──────────────────────────────────
+  _syncHeatmap() {
+    const old = this.scene.getObjectByName('noise_heatmap');
+    if (old) { old.geometry.dispose(); old.material.map?.dispose(); old.material.dispose(); this.scene.remove(old); }
+    const res = APP.calcResult;
+    if (!res || !res.levels?.length) return;
+    const { levels, nx, ny, xmin, ymin, cellsize, min_db, max_db } = res;
+    const minDb = min_db ?? 35, maxDb = max_db ?? 75;
+    const range = Math.max(maxDb - minDb, 1);
+    // Build RGBA texture from levels
+    const data = new Uint8Array(nx * ny * 4);
+    for (let iy = 0; iy < ny; iy++) {
+      for (let ix = 0; ix < nx; ix++) {
+        const db = levels[iy * nx + ix];
+        const i  = ((ny - 1 - iy) * nx + ix) * 4;  // flip Y for texture
+        if (!isFinite(db)) { data[i+3] = 0; continue; }
+        const t = Math.max(0, Math.min(1, (db - minDb) / range));
+        const [r,g,b] = dbToRGB(t);
+        data[i]=r; data[i+1]=g; data[i+2]=b; data[i+3]=200;
+      }
+    }
+    const tex = new THREE.DataTexture(data, nx, ny, THREE.RGBAFormat);
+    tex.needsUpdate = true;
+    const W = nx * cellsize, D = ny * cellsize;
+    const geo = new THREE.PlaneGeometry(W, D);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.8,
+      depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.name = 'noise_heatmap';
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(xmin + W/2, 0.05, -(ymin + D/2));
+    this.scene.add(mesh);
+  },
+
+  // ── 3D isolines (marching-squares contours) ──────────────────────────────
+  _syncIsolines() {
+    const old = this.scene.getObjectByName('noise_isolines');
+    if (old) { old.geometry.dispose(); old.material.dispose(); this.scene.remove(old); }
+    const res = APP.calcResult;
+    if (!res || !res.levels?.length) return;
+    const { levels, nx, ny, xmin, ymin, cellsize, min_db, max_db } = res;
+    const minDb = Math.ceil((min_db ?? 35) / 5) * 5;
+    const maxDb = Math.floor((max_db ?? 75) / 5) * 5;
+    const range = Math.max((max_db??75) - (min_db??35), 1);
+    const positions = [], colors = [];
+    const col = new THREE.Color();
+    function getLevel(ix, iy) {
+      if (ix < 0||ix >= nx||iy < 0||iy >= ny) return NaN;
+      return levels[iy * nx + ix];
+    }
+    for (let threshold = minDb; threshold <= maxDb; threshold += 5) {
+      const t = Math.max(0, Math.min(1, (threshold - (min_db??35)) / range));
+      const [r,g,b] = dbToRGB(t);
+      col.setRGB(r/255, g/255, b/255);
+      for (let iy = 0; iy < ny-1; iy++) {
+        for (let ix = 0; ix < nx-1; ix++) {
+          // 4 corners of the cell
+          const v00 = getLevel(ix,iy), v10 = getLevel(ix+1,iy);
+          const v01 = getLevel(ix,iy+1), v11 = getLevel(ix+1,iy+1);
+          if (![v00,v10,v01,v11].every(isFinite)) continue;
+          const mc = ((v00>=threshold)?8:0)|((v10>=threshold)?4:0)|
+                     ((v11>=threshold)?2:0)|((v01>=threshold)?1:0);
+          if (mc===0||mc===15) continue;
+          // Interpolate edge crossings
+          function lerp(a,b) { return (threshold-a)/(b-a); }
+          const wx = xmin + ix*cellsize, wy = ymin + iy*cellsize;
+          const pts = {
+            b: [wx + lerp(v00,v10)*cellsize, wy],             // bottom edge
+            r: [wx + cellsize,               wy + lerp(v10,v11)*cellsize], // right
+            t: [wx + lerp(v01,v11)*cellsize, wy + cellsize],  // top
+            l: [wx,                          wy + lerp(v00,v01)*cellsize], // left
+          };
+          // Marching squares line segments (16 cases → 6 ambiguous → use simple table)
+          const segs = {
+            1:['l','b'], 2:['b','r'], 3:['l','r'], 4:['r','t'], 5:['l','b','r','t'],
+            6:['b','t'], 7:['l','t'], 8:['l','t'], 9:['b','t'], 10:['l','b','r','t'],
+            11:['r','t'], 12:['l','r'], 13:['b','r'], 14:['l','b'], 15:[],
+          };
+          const s = segs[mc] || [];
+          for (let k = 0; k < s.length; k += 2) {
+            const a = pts[s[k]], b = pts[s[k+1]];
+            if (!a||!b) continue;
+            positions.push(a[0], 0.15, -a[1]);
+            positions.push(b[0], 0.15, -b[1]);
+            colors.push(col.r,col.g,col.b, col.r,col.g,col.b);
+          }
+        }
+      }
+    }
+    if (!positions.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color',    new THREE.Float32BufferAttribute(colors, 3));
+    const mat = new THREE.LineBasicMaterial({ vertexColors: true, linewidth: 1.5 });
+    const lines = new THREE.LineSegments(geo, mat);
+    lines.name = 'noise_isolines';
+    this.scene.add(lines);
   },
 
   _fitCamera() {
@@ -1580,11 +1700,11 @@ const TC = {
         vp.requestRedraw();
         e.preventDefault();
       } else {
-        if (!e.ctrlKey) {
-          APP.selectedIds = new Set();
-          _updateSelectionCard();
-          vp.requestRedraw();
-        }
+        // No object hit — start rubber-band box selection
+        if (!e.ctrlKey) APP.selectedIds = new Set();
+        _boxSel = { sx: e.offsetX, sy: e.offsetY, ex: e.offsetX, ey: e.offsetY };
+        _updateSelectionCard();
+        vp.requestRedraw();
       }
     }
   },
@@ -1612,6 +1732,11 @@ const TC = {
       APP.tool.draftMouse = [w.x, w.y, 0];
       vp.requestRedraw();
       return;
+    }
+    // Box-select rubber band
+    if (_boxSel) {
+      _boxSel.ex = e.offsetX; _boxSel.ey = e.offsetY;
+      vp.requestRedraw(); return;
     }
     // Drag
     if (!APP.drag.active) return;
@@ -1651,6 +1776,21 @@ const TC = {
   },
 
   async onMouseUp(e) {
+    // Finalise rubber-band box selection
+    if (_boxSel) {
+      const b = _boxSel; _boxSel = null;
+      const dx = Math.abs(b.ex - b.sx), dy = Math.abs(b.ey - b.sy);
+      if (dx > 4 || dy > 4) {
+        // Convert canvas rect to world rect
+        const w0 = vp.canvasToWorld(Math.min(b.sx,b.ex), Math.min(b.sy,b.ey));
+        const w1 = vp.canvasToWorld(Math.max(b.sx,b.ex), Math.max(b.sy,b.ey));
+        const [x0,y0,x1,y1] = [w0.x, w0.y, w1.x, w1.y];
+        APP.objects.forEach(obj => {
+          if (_objInRect(obj, x0, y0, x1, y1)) APP.selectedIds.add(obj.row_id);
+        });
+      }
+      _updateSelectionCard(); vp.requestRedraw(); return;
+    }
     if (!APP.drag.active) return;
     APP.drag.active = false;
     const obj = APP.objects.find(o => o.row_id === APP.drag.rowId);
@@ -1689,6 +1829,50 @@ const TC = {
     }
   },
 };
+
+// ── Box-select helpers ────────────────────────────────────────────────────
+/** Return true if any part of obj touches the world-space rectangle [x0,y0,x1,y1].
+ *  y0 < y1 because canvasToWorld flips Y correctly. */
+function _objInRect(obj, x0, y0, x1, y1) {
+  // normalise so x0<x1, y0<y1
+  const lx = Math.min(x0,x1), rx = Math.max(x0,x1);
+  const ly = Math.min(y0,y1), ry = Math.max(y0,y1);
+  if (obj.object_type === 'point_source' && obj.position) {
+    const [px,py] = obj.position;
+    return px >= lx && px <= rx && py >= ly && py <= ry;
+  }
+  const verts = obj.vertices;
+  if (!verts?.length) return false;
+  // Any vertex inside?
+  for (const [vx,vy] of verts)
+    if (vx >= lx && vx <= rx && vy >= ly && vy <= ry) return true;
+  // Any segment crosses?
+  for (let i = 0; i < verts.length-1; i++) {
+    const [ax,ay] = verts[i], [bx,by] = verts[i+1];
+    if (_segIntersectsRect(ax,ay,bx,by, lx,ly,rx,ry)) return true;
+  }
+  return false;
+}
+function _segIntersectsRect(ax,ay,bx,by, lx,ly,rx,ry) {
+  // Cohen–Sutherland outcodes
+  function code(x,y) {
+    return (x<lx?1:0)|(x>rx?2:0)|(y<ly?4:0)|(y>ry?8:0);
+  }
+  let c1=code(ax,ay), c2=code(bx,by);
+  while (true) {
+    if (!(c1|c2)) return true;       // both inside
+    if (c1&c2)   return false;       // both outside same half-plane
+    const c = c1 || c2;
+    let x,y;
+    const dx=bx-ax, dy=by-ay;
+    if (c&8)      { x=ax+dx*(ry-ay)/dy; y=ry; }
+    else if (c&4) { x=ax+dx*(ly-ay)/dy; y=ly; }
+    else if (c&2) { x=rx; y=ay+dy*(rx-ax)/dx; }
+    else          { x=lx; y=ay+dy*(lx-ax)/dx; }
+    if (c===c1) { ax=x; ay=y; c1=code(x,y); }
+    else        { bx=x; by=y; c2=code(x,y); }
+  }
+}
 
 // ── Preview helpers ──────────────────────────────────────────────────────
 function _cloneObj(obj) { return JSON.parse(JSON.stringify(obj)); }
