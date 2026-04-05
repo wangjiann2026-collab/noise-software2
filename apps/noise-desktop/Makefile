@@ -43,6 +43,14 @@ dmg: build-universal
 		echo "DMG not found — check $(BUNDLE)"; \
 	fi
 
+## ── Download Three.js locally for offline production builds ─────────────
+download-threejs:
+	curl -L "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js" \
+	     -o frontend/three.min.js
+	curl -L "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js" \
+	     -o frontend/OrbitControls.js
+	@echo "Three.js downloaded to frontend/ — 3D view now works offline"
+
 ## ── Regenerate icons from icon-source.png ───────────────────────────────
 icons:
 	@if [ -f src-tauri/icons/icon-source.png ]; then \

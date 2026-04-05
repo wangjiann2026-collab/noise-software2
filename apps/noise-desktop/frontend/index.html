@@ -431,11 +431,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   <span id="status-scenario" class="muted">未选场景</span>
 </div>
 
-<!-- Three.js CDN for 3D rendering -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"
-        onerror="window._threeLoadFailed=true"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"
-        onerror="window._threeLoadFailed=true"></script>
+<!-- Three.js: local copy preferred; CDN fallback for dev mode.
+     For offline production builds, place three.min.js + OrbitControls.js
+     in this directory (frontend/) via: make download-threejs -->
+<script>
+(function() {
+  function addScript(src, onErr) {
+    var s = document.createElement('script');
+    s.src = src; s.onerror = onErr;
+    document.currentScript.parentNode.insertBefore(s, document.currentScript.nextSibling);
+  }
+  var CDN = 'https://cdn.jsdelivr.net/npm/three@0.128.0';
+  // Try local first, fall back to CDN automatically
+  addScript('three.min.js', function() {
+    addScript(CDN + '/build/three.min.js', function() { window._threeLoadFailed = true; });
+  });
+  addScript('OrbitControls.js', function() {
+    addScript(CDN + '/examples/js/controls/OrbitControls.js', function() {});
+  });
+})();
+</script>
 
 <script>
 // ── Tauri bridge ────────────────────────────────────────────────────────
@@ -720,35 +735,42 @@ const Renderer2D = {
   _drawHeatmap() {
     const res = APP.calcResult;
     if (!res || !res.levels?.length || APP.heatmapOpacity <= 0) return;
-    const { ctx, canvas } = this.vp;
+    const { ctx } = this.vp;
+    const W = this.vp.W, H = this.vp.H;          // CSS pixels (matches worldToCanvas)
     const { levels, nx, ny, xmin, ymin, cellsize, min_db, max_db } = res;
     const minDb = min_db ?? 35;
     const maxDb = max_db ?? 75;
     const range = Math.max(maxDb - minDb, 1);
-    const alpha = Math.round(APP.heatmapOpacity * 255);
 
-    // World coords of canvas corners
-    const W = canvas.width, H = canvas.height;
+    // Viewport corners in world coords (use CSS W/H, not canvas.width/height)
     const tl = this.vp.canvasToWorld(0, 0);
     const br = this.vp.canvasToWorld(W, H);
 
-    // Which grid columns/rows are visible?
+    // Visible grid cell range
     const ixMin = Math.max(0,    Math.floor((tl.x - xmin) / cellsize));
     const ixMax = Math.min(nx-1, Math.ceil ((br.x - xmin) / cellsize));
     const iyMin = Math.max(0,    Math.floor((br.y - ymin) / cellsize));
     const iyMax = Math.min(ny-1, Math.ceil ((tl.y - ymin) / cellsize));
     if (ixMin > ixMax || iyMin > iyMax) return;
 
-    // Build an ImageData covering exactly the visible grid region
-    const pa = this.vp.worldToCanvas(xmin + ixMin * cellsize, ymin + (iyMax+1) * cellsize);
-    const pb = this.vp.worldToCanvas(xmin + (ixMax+1) * cellsize, ymin + iyMin * cellsize);
-    const imgW = Math.max(1, Math.round(pb.x - pa.x));
-    const imgH = Math.max(1, Math.round(pb.y - pa.y));
-    const cellPxW = imgW / (ixMax - ixMin + 1);
-    const cellPxH = imgH / (iyMax - iyMin + 1);
+    // CSS-pixel extent of the visible region
+    const pa = this.vp.worldToCanvas(xmin +  ixMin      * cellsize, ymin + (iyMax+1) * cellsize);
+    const pb = this.vp.worldToCanvas(xmin + (ixMax+1)   * cellsize, ymin +  iyMin    * cellsize);
+    const imgW  = Math.max(1, Math.round(pb.x - pa.x));
+    const imgH  = Math.max(1, Math.round(pb.y - pa.y));
+    const nCols = ixMax - ixMin + 1;
+    const nRows = iyMax - iyMin + 1;
+    const cpw   = imgW / nCols;   // CSS pixels per grid cell (x)
+    const cph   = imgH / nRows;   // CSS pixels per grid cell (y)
 
-    const imgData = ctx.createImageData(imgW, imgH);
-    const d = imgData.data;
+    // Build ImageData on a scratch canvas so putImageData works without DPR math.
+    // ctx.drawImage (used below) respects the DPR transform set by vp.resize().
+    const tmp  = document.createElement('canvas');
+    tmp.width  = imgW;
+    tmp.height = imgH;
+    const tCtx = tmp.getContext('2d');
+    const img  = tCtx.createImageData(imgW, imgH);
+    const data = img.data;
 
     for (let iy = iyMin; iy <= iyMax; iy++) {
       for (let ix = ixMin; ix <= ixMax; ix++) {
@@ -757,23 +779,28 @@ const Renderer2D = {
         const t = Math.max(0, Math.min(1, (db - minDb) / range));
         const [r, g, b] = dbToRGB(t);
 
-        // Fill the rectangle of pixels this cell occupies in the ImageData
-        const pxX0 = Math.round((ix - ixMin) * cellPxW);
-        const pxY0 = Math.round((iy - iyMin) * cellPxH);  // grid Y=0 is bottom
-        const pxX1 = Math.round((ix - ixMin + 1) * cellPxW);
-        const pxY1 = Math.round((iy - iyMin + 1) * cellPxH);
-        // ImageData rows run top→bottom; grid Y increases upward → flip
-        const rowTop    = imgH - pxY1;
-        const rowBottom = imgH - pxY0;
-        for (let py = rowTop; py < rowBottom; py++) {
-          for (let px = pxX0; px < pxX1; px++) {
-            const i = (py * imgW + px) * 4;
-            d[i]   = r; d[i+1] = g; d[i+2] = b; d[i+3] = alpha;
+        const pxX0 = Math.round((ix - ixMin)     * cpw);
+        const pxX1 = Math.max(pxX0 + 1, Math.round((ix - ixMin + 1) * cpw));
+        const pxY0 = Math.round((iy - iyMin)     * cph);
+        const pxY1 = Math.max(pxY0 + 1, Math.round((iy - iyMin + 1) * cph));
+        // Flip Y: grid row 0 is bottom, ImageData row 0 is top
+        const rowT = imgH - pxY1, rowB = imgH - pxY0;
+
+        for (let py = Math.max(0, rowT); py < Math.min(imgH, rowB); py++) {
+          for (let px = Math.max(0, pxX0); px < Math.min(imgW, pxX1); px++) {
+            const i = (py * imgW + px) << 2;
+            data[i] = r; data[i+1] = g; data[i+2] = b; data[i+3] = 255;
           }
         }
       }
     }
-    ctx.putImageData(imgData, Math.round(pa.x), Math.round(pa.y));
+    tCtx.putImageData(img, 0, 0);
+
+    // drawImage honours the DPR transform → perfect alignment with objects & grid
+    ctx.save();
+    ctx.globalAlpha = APP.heatmapOpacity;
+    ctx.drawImage(tmp, Math.round(pa.x), Math.round(pa.y));
+    ctx.restore();
   },
 
   _drawObjects() {
@@ -1113,9 +1140,13 @@ const R3D = {
 
   init() {
     if (this._initialized) return true;
-    if (typeof THREE === 'undefined') return false;
+    if (typeof THREE === 'undefined') {
+      showStatus('Three.js 未加载 — 3D 视图不可用（需要网络连接或本地 three.min.js）', 'err');
+      return false;
+    }
     const canvas = document.getElementById('canvas-3d');
-    const W = canvas.offsetWidth || 800, H = canvas.offsetHeight || 600;
+    const W = canvas.offsetWidth  || canvas.parentElement?.offsetWidth  || 800;
+    const H = canvas.offsetHeight || canvas.parentElement?.offsetHeight || 600;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1321,7 +1352,11 @@ function switchView(v) {
     R3D.stop();
     vp.requestRedraw();
   } else {
-    R3D.start();
+    // Wait one frame so canvas-3d has layout dimensions before init/resize
+    requestAnimationFrame(() => {
+      R3D.start();
+      R3D.resize();   // correct aspect ratio after canvas becomes visible
+    });
   }
 }
 
