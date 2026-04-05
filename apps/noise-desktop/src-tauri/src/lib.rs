@@ -327,11 +327,11 @@ pub fn delete_object(
 
 /// Run a horizontal grid calculation for a scenario and persist the result.
 ///
-/// `metric` selects the noise descriptor: `"Lden"`, `"Ldn"`, or any
-/// single-period label recognised by the engine.
+/// Heavy computation is offloaded to a blocking thread so the UI stays
+/// responsive. Grid cell count is capped at 400 000 (≈ 632 × 632).
 #[tauri::command]
-pub fn run_calculation(
-    state: State<AppState>,
+pub async fn run_calculation(
+    state: State<'_, AppState>,
     scenario_id: String,
     metric: String,
     resolution_m: f64,
@@ -349,9 +349,16 @@ pub fn run_calculation(
     if nx == 0 || ny == 0 {
         return Err("grid extent produces a zero-sized grid".into());
     }
+    const MAX_CELLS: usize = 400_000;
+    if nx * ny > MAX_CELLS {
+        return Err(format!(
+            "格点数 {nx}×{ny}={} 超过上限 {MAX_CELLS}。请降低分辨率（建议 ≥ 5 m）或缩小范围。",
+            nx * ny
+        ));
+    }
 
-    // ── Load scene objects from DB ────────────────────────────────────────────
-    let (sources, barriers): (Vec<SourceSpec>, Vec<BarrierSpec>) = {
+    // ── Load scene objects from DB (lock held only briefly) ──────────────────
+    let (mut sources, barriers): (Vec<SourceSpec>, Vec<BarrierSpec>) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let repo = SceneObjectRepository::new(db.connection());
         let objects = repo
@@ -368,62 +375,60 @@ pub fn run_calculation(
     };
 
     // Fall back to a demo source at the grid centre when none exist yet.
-    let sources = if sources.is_empty() {
-        vec![SourceSpec {
+    if sources.is_empty() {
+        sources.push(SourceSpec {
             id: 0,
             position: Point3::new((xmin + xmax) / 2.0, ymin + 10.0, 0.5),
             lw_db: [82.0; 8],
             g_source: 0.0,
-        }]
-    } else {
-        sources
-    };
-
-    // ── Build grid and run calculator ─────────────────────────────────────────
-    let mut grid = HorizontalGrid::new(
-        1,
-        "desktop_grid",
-        Point3::new(xmin, ymin, 0.0),
-        resolution_m,
-        resolution_m,
-        nx,
-        ny,
-        4.0, // receiver height above ground (m)
-    );
-
-    let cfg = CalculatorConfig {
-        propagation: PropagationConfig::default(),
-        g_receiver: 0.5,
-        g_middle: 0.5,
-        max_source_range_m: None,
-    };
-
-    match metric.as_str() {
-        "Lden" => {
-            let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
-            mp.calculate_lden(&mut grid, &sources, &barriers);
-        }
-        "Ldn" => {
-            let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
-            mp.calculate_ldn(&mut grid, &sources, &barriers);
-        }
-        _ => {
-            GridCalculator::new(cfg).calculate(&mut grid, &sources, &barriers, None);
-        }
+        });
     }
 
-    let levels = grid.results.clone();
+    // ── Run heavy computation in a background thread ──────────────────────────
+    let metric_for_closure = metric.clone();
+    let levels: Vec<f32> = tauri::async_runtime::spawn_blocking(move || {
+        let metric = metric_for_closure;
+        let mut grid = HorizontalGrid::new(
+            1,
+            "desktop_grid",
+            Point3::new(xmin, ymin, 0.0),
+            resolution_m,
+            resolution_m,
+            nx,
+            ny,
+            4.0,
+        );
+        let cfg = CalculatorConfig {
+            propagation: PropagationConfig::default(),
+            g_receiver: 0.5,
+            g_middle: 0.5,
+            max_source_range_m: None,
+        };
+        match metric.as_str() {
+            "Lden" => {
+                let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
+                mp.calculate_lden(&mut grid, &sources, &barriers);
+            }
+            "Ldn" => {
+                let mp = MultiPeriodGridCalculator::new(cfg, MultiPeriodConfig::default());
+                mp.calculate_ldn(&mut grid, &sources, &barriers);
+            }
+            _ => {
+                GridCalculator::new(cfg).calculate(&mut grid, &sources, &barriers, None);
+            }
+        }
+        grid.results
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     // ── Persist result ────────────────────────────────────────────────────────
     let data = serde_json::json!({
-        "nx": nx,
-        "ny": ny,
-        "xmin": xmin,
-        "ymin": ymin,
+        "nx": nx, "ny": ny,
+        "xmin": xmin, "ymin": ymin,
         "cellsize": resolution_m,
         "levels": levels,
     });
-
     let calc_id = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         CalculationRepository::new(db.connection())
@@ -431,28 +436,21 @@ pub fn run_calculation(
             .map_err(|e| e.to_string())?
     };
 
-    // ── Compute statistics ────────────────────────────────────────────────────
-    let finite: Vec<f32> = levels
-        .iter()
-        .copied()
+    // ── Statistics ────────────────────────────────────────────────────────────
+    let finite: Vec<f32> = levels.iter().copied()
         .filter(|&v| v.is_finite() && v > 0.0)
         .collect();
     let (min_db, max_db, mean_db) = if finite.is_empty() {
         (0.0_f64, 0.0, 0.0)
     } else {
-        let min = finite.iter().copied().fold(f32::INFINITY, f32::min) as f64;
-        let max = finite.iter().copied().fold(f32::NEG_INFINITY, f32::max) as f64;
+        let min  = finite.iter().copied().fold(f32::INFINITY,     f32::min) as f64;
+        let max  = finite.iter().copied().fold(f32::NEG_INFINITY, f32::max) as f64;
         let mean = finite.iter().sum::<f32>() as f64 / finite.len() as f64;
         (min, max, mean)
     };
 
     Ok(CalcResult {
-        calc_id,
-        metric,
-        nx,
-        ny,
-        xmin,
-        ymin,
+        calc_id, metric, nx, ny, xmin, ymin,
         cellsize: resolution_m,
         levels,
         mean_db: (mean_db * 10.0).round() / 10.0,

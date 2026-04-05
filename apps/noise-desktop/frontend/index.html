@@ -2269,7 +2269,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     if (!isFinite(bxmin)) { bxmin = -extent/2; bymin = -extent/2; bxmax = extent/2; bymax = extent/2; }
     else { bxmin -= extent/2; bymin -= extent/2; bxmax += extent/2; bymax += extent/2; }
-    showStatus('计算中…', 'run');
+    const estNx = Math.ceil((bxmax - bxmin) / res);
+    const estNy = Math.ceil((bymax - bymin) / res);
+    const estCells = estNx * estNy;
+    if (estCells > 400_000) {
+      showStatus(`格点数 ${estNx}×${estNy}=${estCells.toLocaleString()} 过多，请提高分辨率（建议 ≥ 5 m）或缩小范围`, 'err');
+      return;
+    }
+    showStatus(`计算中… ${estNx}×${estNy}=${estCells.toLocaleString()} 格点`, 'run');
     try {
       APP.calcResult = await invoke('run_calculation', {
         scenarioId: APP.currentScenarioId, metric,
