@@ -29,7 +29,6 @@
 //! assert!(!grid.results.is_empty());
 //! ```
 
-use rayon::prelude::*;
 use super::{BarrierSpec, CalculatorConfig, GridCalculator, HorizontalGrid, SourceSpec};
 
 // ─── Multi-period configuration ──────────────────────────────────────────────

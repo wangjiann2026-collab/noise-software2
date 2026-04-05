@@ -22,6 +22,10 @@ pub enum RoadSurface {
 }
 
 /// Road traffic noise source (CNOSSOS-EU road model).
+///
+/// When `emission_lw_db` is set, it is used directly as the per-sample
+/// sound power (converted from a flat A-weighted spectrum).  When it is
+/// `None` the CNOSSOS traffic-flow model is used instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoadSource {
     pub id: u64,
@@ -32,6 +36,11 @@ pub struct RoadSource {
     pub gradient_pct: f64,
     pub source_height_m: f64,
     pub sample_spacing_m: f64,
+    /// Direct A-weighted sound power level (dBA re 1 pW / metre of road).
+    /// When set this bypasses the traffic-flow model.
+    /// `None` → fall back to traffic flows (or the default 80 dB stub).
+    #[serde(default)]
+    pub emission_lw_db: Option<f64>,
 }
 
 impl RoadSource {

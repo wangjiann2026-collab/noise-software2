@@ -292,7 +292,7 @@ pub fn list_objects(
                 ),
                 SceneObject::RoadSource(rs) => (
                     None,
-                    None,
+                    Some(rs.emission_lw_db.unwrap_or(80.0)),
                     Some(rs.vertices.iter().map(|v| [v.x, v.y, v.z]).collect()),
                     None,
                     Some(rs.source_height_m),
@@ -575,12 +575,17 @@ pub fn export_file(
 }
 
 /// Add a road source polyline to a scenario.
+///
+/// `lw_db` is the A-weighted sound power level (dBA re 1 pW per metre of road).
+/// `source_height_m` is the emission height above ground.
+/// `sample_spacing_m` controls the polyline discretisation interval.
 #[tauri::command]
 pub fn add_road_source(
     state: State<AppState>,
     scenario_id: String,
     name: String,
     vertices: Vec<[f64; 3]>,
+    lw_db: f64,
     source_height_m: f64,
     sample_spacing_m: f64,
 ) -> Result<i64, String> {
@@ -597,11 +602,47 @@ pub fn add_road_source(
         gradient_pct: 0.0,
         source_height_m,
         sample_spacing_m,
+        emission_lw_db: Some(lw_db),
     };
     let db = state.db.lock().map_err(|e| e.to_string())?;
     SceneObjectRepository::new(db.connection())
         .insert(&scenario_id, &SceneObject::RoadSource(rs))
         .map_err(|e| e.to_string())
+}
+
+/// Update non-geometric properties of an existing scene object.
+///
+/// - `lw_db`:          new A-weighted sound power (dBA) — point sources and road sources.
+/// - `height_m`:       new barrier height (m) — barriers.
+/// - `source_height_m` new emission height (m) — road sources.
+#[tauri::command]
+pub fn update_object_props(
+    state: State<AppState>,
+    row_id: i64,
+    lw_db: Option<f64>,
+    height_m: Option<f64>,
+    source_height_m: Option<f64>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let repo = SceneObjectRepository::new(db.connection());
+    let mut obj = repo.get(row_id).map_err(|e| e.to_string())?;
+    match &mut obj {
+        SceneObject::PointSource(ps) => {
+            if let Some(lw) = lw_db {
+                ps.lw_db = [lw; 8];
+                ps.lwa_db = lw;
+            }
+        }
+        SceneObject::RoadSource(rs) => {
+            if let Some(lw) = lw_db     { rs.emission_lw_db = Some(lw); }
+            if let Some(h)  = source_height_m { rs.source_height_m = h; }
+        }
+        SceneObject::Barrier(b) => {
+            if let Some(h) = height_m { b.height_m = h; }
+        }
+        _ => return Err("property update not supported for this object type".into()),
+    }
+    repo.update(row_id, &obj).map_err(|e| e.to_string())
 }
 
 /// Add a noise barrier polyline to a scenario.
@@ -1118,13 +1159,22 @@ fn append_sources(obj: &SceneObject, out: &mut Vec<SourceSpec>) {
             });
         }
         SceneObject::RoadSource(rs) => {
+            // Per-band flat-spectrum Lw derived from the A-weighted total.
+            // Correction: Lw_flat = Lw_A − 10·log10(Σ 10^(Ai/10)) ≈ Lw_A − 7.0 dB
+            // so that when the engine re-applies A-weights the total = Lw_A.
+            const A_WEIGHT_CORRECTION: f64 = 7.0;
+            let base_lw_per_band = rs.emission_lw_db
+                .map(|lwa| lwa - A_WEIGHT_CORRECTION)
+                .unwrap_or(80.0 - A_WEIGHT_CORRECTION);   // default 80 dBA
+            let base_lw = [base_lw_per_band; 8];
+
             if rs.vertices.len() < 2 {
                 // Degenerate road — emit a single point at the first vertex.
                 if let Some(&v) = rs.vertices.first() {
                     out.push(SourceSpec {
                         id: rs.id,
                         position: Point3::new(v.x, v.y, rs.source_height_m),
-                        lw_db: [80.0; 8],
+                        lw_db: base_lw,
                         g_source: 0.0,
                     });
                 }
@@ -1140,7 +1190,6 @@ fn append_sources(obj: &SceneObject, out: &mut Vec<SourceSpec>) {
 
             // Energy split: Lw_sample = Lw_road − 10·log10(N).
             let split_offset = -10.0 * n.log10();
-            let base_lw = [80.0_f64; 8];
             let sample_lw: [f64; 8] = base_lw.map(|lw| lw + split_offset);
 
             for (i, pos) in samples.into_iter().enumerate() {
@@ -1268,6 +1317,7 @@ pub fn run() {
             commands::offset_polyline,
             commands::extend_polyline,
             commands::insert_vertex,
+            commands::update_object_props,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -166,6 +166,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .stat-label{color:var(--muted);font-size:11px}
 .stat-val{font-weight:700;font-size:13px}
 .stat-val.high{color:var(--danger)}.stat-val.mid{color:var(--warn)}.stat-val.low{color:var(--success)}
+.prop-input{width:70px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font-size:12px;font-weight:700;text-align:right}
 
 /* ── Status Bar ── */
 #statusbar{height:24px;background:var(--panel);border-top:1px solid var(--border);
@@ -360,7 +361,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
         <!-- 道路专属 -->
         <div id="add-road-fields" style="display:none">
           <div class="form-row">
+            <div class="form-group"><label>Lw (dBA)</label><input id="add-road-lw" type="number" value="80" min="0" max="140"></div>
             <div class="form-group"><label>声源高 (m)</label><input id="add-sh" type="number" value="0.05" step="0.05"></div>
+          </div>
+          <div class="form-row">
             <div class="form-group"><label>采样间距 (m)</label><input id="add-ss" type="number" value="5" min="1"></div>
           </div>
           <button class="btn-full primary" id="btn-draw-road">✏ 进入绘制模式</button>
@@ -1459,9 +1463,11 @@ const TC = {
         : `噪声墙_${APP.objects.length + 1}`;
       if (mode === 'road') {
         const sh = parseFloat(document.getElementById('add-sh').value) || 0.05;
+        const roadLw = parseFloat(document.getElementById('add-road-lw').value) || 80;
+        const ss = parseFloat(document.getElementById('add-ss').value) || 5;
         await invoke('add_road_source', {
           scenarioId: APP.currentScenarioId, name,
-          vertices: verts, sourceHeightM: sh, sampleSpacingM: 1.0,
+          vertices: verts, lwDb: roadLw, sourceHeightM: sh, sampleSpacingM: ss,
         });
       } else {
         const h = parseFloat(document.getElementById('add-height').value) || 3.0;
@@ -1899,7 +1905,8 @@ const PolylineCmdController = {
       if (obj.object_type === 'road_source') {
         await invoke('add_road_source', {
           scenarioId: APP.currentScenarioId, name: newName,
-          vertices: vertsB, sourceHeightM: obj.source_height_m || 0.05, sampleSpacingM: 1.0,
+          vertices: vertsB, lwDb: obj.lw_db || 80,
+          sourceHeightM: obj.source_height_m || 0.05, sampleSpacingM: obj.sample_spacing_m || 5,
         });
       } else {
         await invoke('add_barrier', {
@@ -2411,22 +2418,64 @@ function _updateSelectionCard() {
     <div class="stat-row"><span class="stat-label">X (m)</span><span class="stat-val">${obj.position[0].toFixed(1)}</span></div>
     <div class="stat-row"><span class="stat-label">Y (m)</span><span class="stat-val">${obj.position[1].toFixed(1)}</span></div>
     <div class="stat-row"><span class="stat-label">Z (m)</span><span class="stat-val">${(obj.position[2]||0).toFixed(1)}</span></div>
-    <div class="stat-row"><span class="stat-label">Lw (dB)</span><span class="stat-val mid">${(obj.lw_db||0).toFixed(1)}</span></div>`;
-  } else if (obj.vertices?.length) {
+    <div class="stat-row">
+      <span class="stat-label">Lw (dBA)</span>
+      <input id="prop-lw" type="number" class="prop-input" value="${(obj.lw_db||80).toFixed(1)}" min="0" max="140" step="0.5">
+    </div>`;
+  } else if (obj.object_type === 'road_source' && obj.vertices?.length) {
     rows += `<div class="stat-row"><span class="stat-label">顶点数</span><span class="stat-val">${obj.vertices.length}</span></div>`;
-    if (obj.height_m != null)
-      rows += `<div class="stat-row"><span class="stat-label">高度 (m)</span><span class="stat-val">${obj.height_m.toFixed(1)}</span></div>`;
-    if (obj.source_height_m != null)
-      rows += `<div class="stat-row"><span class="stat-label">声源高 (m)</span><span class="stat-val">${obj.source_height_m.toFixed(2)}</span></div>`;
-    // Polyline length
     let len = 0;
     for (let i = 0; i < obj.vertices.length - 1; i++) {
       const [ax,ay] = obj.vertices[i], [bx,by] = obj.vertices[i+1];
       len += Math.hypot(bx-ax, by-ay);
     }
     rows += `<div class="stat-row"><span class="stat-label">长度 (m)</span><span class="stat-val">${len.toFixed(1)}</span></div>`;
+    rows += `
+    <div class="stat-row">
+      <span class="stat-label">Lw (dBA)</span>
+      <input id="prop-lw" type="number" class="prop-input" value="${(obj.lw_db||80).toFixed(1)}" min="0" max="140" step="0.5">
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">声源高 (m)</span>
+      <input id="prop-sh" type="number" class="prop-input" value="${(obj.source_height_m||0.05).toFixed(2)}" min="0" step="0.05">
+    </div>`;
+  } else if (obj.object_type === 'barrier' && obj.vertices?.length) {
+    rows += `<div class="stat-row"><span class="stat-label">顶点数</span><span class="stat-val">${obj.vertices.length}</span></div>`;
+    let len = 0;
+    for (let i = 0; i < obj.vertices.length - 1; i++) {
+      const [ax,ay] = obj.vertices[i], [bx,by] = obj.vertices[i+1];
+      len += Math.hypot(bx-ax, by-ay);
+    }
+    rows += `<div class="stat-row"><span class="stat-label">长度 (m)</span><span class="stat-val">${len.toFixed(1)}</span></div>`;
+    rows += `
+    <div class="stat-row">
+      <span class="stat-label">高度 (m)</span>
+      <input id="prop-height" type="number" class="prop-input" value="${(obj.height_m||3).toFixed(1)}" min="0.1" step="0.5">
+    </div>`;
+  }
+  // Save button for editable props
+  if (['point_source','road_source','barrier'].includes(obj.object_type)) {
+    rows += `<button class="btn-full" style="margin-top:6px" onclick="saveObjectProps(${obj.row_id},'${obj.object_type}')">保存属性</button>`;
   }
   body.innerHTML = rows;
+}
+
+async function saveObjectProps(rowId, objType) {
+  try {
+    const lwInput = document.getElementById('prop-lw');
+    const heightInput = document.getElementById('prop-height');
+    const shInput = document.getElementById('prop-sh');
+    const args = { rowId };
+    if (lwInput) args.lwDb = parseFloat(lwInput.value);
+    if (heightInput) args.heightM = parseFloat(heightInput.value);
+    if (shInput) args.sourceHeightM = parseFloat(shInput.value);
+    await invoke('update_object_props', args);
+    await loadObjects();
+    renderObjectList();
+    showStatus('属性已保存');
+  } catch(e) {
+    showStatus('保存失败: ' + e, true);
+  }
 }
 
 function _updateResultsPanel(result) {
