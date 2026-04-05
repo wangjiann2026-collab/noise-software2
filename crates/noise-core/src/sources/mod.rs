@@ -15,7 +15,6 @@ pub use road::RoadSource;
 pub use superposition::{combine_dba, combine_bands, ReceiverResult, SourceContribution};
 
 use nalgebra::Point3;
-use serde::{Deserialize, Serialize};
 
 /// Unified noise source trait — all source types implement this.
 pub trait NoiseSource: Send + Sync {

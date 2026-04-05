@@ -9,7 +9,7 @@
 //! 5. Valid paths contribute to the total sound pressure via energy addition.
 
 use crate::obstacles::ReflectorSurface;
-use nalgebra::{Point3, Unit, Vector3};
+use nalgebra::Point3;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

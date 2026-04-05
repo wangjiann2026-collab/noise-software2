@@ -67,7 +67,7 @@ fn a_gr_band(f: f64, hs: f64, hr: f64, d: f64, gs: f64, gr: f64, gm: f64) -> f64
 }
 
 /// Ground factor q for middle region (ISO 9613-2 eq. 8).
-fn q_factor(f: f64, hs: f64, hr: f64, d: f64) -> f64 {
+fn q_factor(_f: f64, hs: f64, hr: f64, d: f64) -> f64 {
     // dp = distance parameter = 30(hs + hr) [m] at the crossover frequency
     let dp = 30.0 * (hs + hr);
     if d > dp { 0.0 } else { 1.0 - d / dp }
@@ -81,7 +81,7 @@ fn a_m(f: f64, hs: f64, hr: f64, d: f64, gm: f64) -> f64 {
 }
 
 /// A_s or A_r for source/receiver region (ISO 9613-2 eq. 5).
-fn a_s_or_r(f: f64, h: f64, d: f64, g: f64) -> f64 {
+fn a_s_or_r(f: f64, h: f64, _d: f64, g: f64) -> f64 {
     // Effective flow resistivity term.
     let sigma = effective_sigma(g);
     // Reflection coefficient r (simplified Delany-Bazley).
