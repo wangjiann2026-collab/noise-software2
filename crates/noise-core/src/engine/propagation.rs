@@ -101,10 +101,8 @@ impl AttenuationBreakdown {
 }
 
 /// Find where the source→receiver path crosses the barrier segment p0→p1 in XY.
-/// Returns the 3D edge point at `height_m` if they cross within both segments.
-/// Falls back to the segment midpoint when the lines are nearly parallel
-/// (e.g. road running parallel to a noise wall — the receiver is directly
-/// beside the wall rather than behind it, so the midpoint is a reasonable proxy).
+/// Returns the 3D edge point at `height_m` if they cross within both segments,
+/// or `None` if the path does not intersect the barrier (including the parallel case).
 fn barrier_crossing_xy(
     source: &nalgebra::Point3<f64>,
     receiver: &nalgebra::Point3<f64>,
@@ -126,12 +124,9 @@ fn barrier_crossing_xy(
     let cross = d1x * d2y - d1y * d2x;
 
     if cross.abs() < 1e-9 {
-        // Lines are parallel — use midpoint as a reasonable proxy.
-        return Some(nalgebra::Point3::new(
-            (ax + bx) * 0.5,
-            (ay + by) * 0.5,
-            height_m,
-        ));
+        // Lines are parallel — source→receiver path does not cross the barrier,
+        // so no diffraction attenuation applies.
+        return None;
     }
 
     let dx = ax - sx;
